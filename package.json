@@ -478,6 +478,10 @@
 	"dependencies": {
 		"@microsoft/tiktokenizer": "^1.0.10"
 	},
+	"overrides": {
+		"diff": "8.0.3",
+		"serialize-javascript": "7.0.5"
+	},
 	"devDependencies": {
 		"@eslint/js": "^9.13.0",
 		"@stylistic/eslint-plugin": "^2.9.0",

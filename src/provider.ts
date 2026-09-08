@@ -107,6 +107,11 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 			},
 		};
 		const requestStartTime = Date.now();
+		const abortController = new AbortController();
+		const cancellationDisposable = token.onCancellationRequested(() => abortController.abort());
+		if (token.isCancellationRequested) {
+			abortController.abort();
+		}
 		try {
 			// get model config from user settings
 			const config = vscode.workspace.getConfiguration();
@@ -477,6 +482,7 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 						method: "POST",
 						headers: requestHeaders,
 						body: JSON.stringify(requestBody),
+						signal: abortController.signal,
 					});
 
 					if (!res.ok) {
@@ -496,6 +502,10 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 				await openaiApi.processStreamingResponse(response.body, trackingProgress, token);
 			}
 		} catch (err) {
+			if (token.isCancellationRequested) {
+				logger.info("request.cancelled", { modelId: model.id });
+				return;
+			}
 			console.error("[OAI Compatible Model Provider] Chat request failed", {
 				modelId: model.id,
 				messageCount: messages.length,
@@ -513,6 +523,7 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 			logger.info("request.end", { modelId: model.id, durationMs });
 			// Update last request time after successful completion
 			this._lastRequestTime = Date.now();
+			cancellationDisposable.dispose();
 		}
 	}
 
