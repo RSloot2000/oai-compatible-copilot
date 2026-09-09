@@ -270,7 +270,11 @@ export abstract class CommonApi<TMessage, TRequestBody> {
 
 		// Flush current buffer if we have content
 		if (this._thinkingBuffer && this._currentThinkingId) {
-			const text = this._thinkingBuffer;
+			// Sanitize: escape triple backticks so VS Code's markdown renderer
+			// doesn't interpret them as code fences that "escape" the thinking block.
+			// Insert a zero-width space (U+200B) after the first backtick — invisible
+			// to the user but breaks the ``` sequence for markdown parsing.
+			const text = this._thinkingBuffer.replace(/```/g, "`\u200B``");
 			this._thinkingBuffer = "";
 			progress.report(new LanguageModelThinkingPart(text, this._currentThinkingId));
 		}

@@ -7,6 +7,7 @@ import { logger } from "./logger";
 import { normalizeUserModels } from "./utils";
 import { abortCommitGeneration, generateCommitMsg } from "./gitCommit/commitMessageGenerator";
 import { TokenizerManager } from "./tokenizer/tokenizerManager";
+import { registerCodebaseTools } from "./codebase/tools";
 
 export function activate(context: vscode.ExtensionContext) {
 	// Initialize logger
@@ -15,7 +16,8 @@ export function activate(context: vscode.ExtensionContext) {
 	// Initialize TokenizerManager with extension path
 	TokenizerManager.initialize(context.extensionPath);
 
-	const tokenCountStatusBarItem: vscode.StatusBarItem = initStatusBar(context);
+	const codebaseIndex = registerCodebaseTools(context);
+	const tokenCountStatusBarItem: vscode.StatusBarItem = initStatusBar(context, codebaseIndex);
 	const provider = new HuggingFaceChatModelProvider(context.secrets, tokenCountStatusBarItem);
 	// Register the Hugging Face provider under the vendor id used in package.json
 	vscode.lm.registerLanguageModelChatProvider("oaicopilot", provider);
@@ -104,6 +106,59 @@ export function activate(context: vscode.ExtensionContext) {
 	context.subscriptions.push(
 		vscode.commands.registerCommand("oaicopilot.openConfig", async () => {
 			ConfigViewPanel.openPanel(context.extensionUri, context.secrets);
+		})
+	);
+
+	context.subscriptions.push(
+		vscode.commands.registerCommand("oaicopilot.codebaseStatus", async () => {
+			const cancellation = new vscode.CancellationTokenSource();
+			try {
+				const status = await codebaseIndex.status(cancellation.token);
+				vscode.window.showInformationMessage(`Codebase index: ${JSON.stringify(status)}`);
+			} finally {
+				cancellation.dispose();
+			}
+		}),
+		vscode.commands.registerCommand("oaicopilot.codebaseIndex", async () => {
+			const status = await codebaseIndex.index(new vscode.CancellationTokenSource().token);
+			if (status.running) {
+				vscode.window.showInformationMessage("Codebase index build started in the background. Use oaicopilot.codebaseStatus to check progress.");
+			} else if (status.error) {
+				vscode.window.showErrorMessage(`Codebase index build failed: ${status.error}`);
+			} else if (status.lastResult) {
+				vscode.window.showInformationMessage(`Codebase index built: ${status.lastResult.indexedFiles} files, ${status.lastResult.indexedChunks} chunks.`);
+			}
+		}),
+		vscode.commands.registerCommand("oaicopilot.codebaseUpdate", async () => {
+			const status = await codebaseIndex.update(new vscode.CancellationTokenSource().token);
+			if (status.running) {
+				vscode.window.showInformationMessage("Codebase index update started in the background. Use oaicopilot.codebaseStatus to check progress.");
+			} else if (status.error) {
+				vscode.window.showErrorMessage(`Codebase index update failed: ${status.error}`);
+			} else if (status.lastResult) {
+				vscode.window.showInformationMessage(`Codebase index updated: ${status.lastResult.indexedFiles} files, ${status.lastResult.indexedChunks} chunks.`);
+			}
+		}),
+		vscode.commands.registerCommand("oaicopilot.codebaseSearch", async () => {
+			const query = await vscode.window.showInputBox({
+				title: "Search Codebase Index",
+				prompt: "Describe the code or behavior to find",
+				ignoreFocusOut: true,
+			});
+			if (!query?.trim()) {
+				return;
+			}
+			const cancellation = new vscode.CancellationTokenSource();
+			try {
+				const results = await codebaseIndex.search(query.trim(), undefined, cancellation.token);
+				const document = await vscode.workspace.openTextDocument({
+					language: "json",
+					content: JSON.stringify({ query, results }, null, 2),
+				});
+				await vscode.window.showTextDocument(document, { preview: true });
+			} finally {
+				cancellation.dispose();
+			}
 		})
 	);
 

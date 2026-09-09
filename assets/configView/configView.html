@@ -104,6 +104,101 @@
 			</div>
 		</section>
 
+		<section id="codebaseIndexSection">
+			<div class="section-header">
+				<h2>Codebase Index</h2>
+				<div class="section-actions">
+					<button id="refreshCodebaseIndex" class="secondary">Refresh</button>
+				</div>
+			</div>
+			<div class="row">
+				<div class="field">
+					<label for="cbQdrantUrl">Qdrant URL</label>
+					<div class="field-description">Base URL of the Qdrant vector database.</div>
+					<input id="cbQdrantUrl" type="text" placeholder="http://192.168.1.251:6333" />
+				</div>
+				<div class="field">
+					<label for="cbOllamaUrl">Ollama URL</label>
+					<div class="field-description">Base URL of the Ollama embedding server.</div>
+					<input id="cbOllamaUrl" type="text" placeholder="http://192.168.1.251:8030" />
+				</div>
+				<div class="field">
+					<label for="cbEmbeddingModel">Embedding Model</label>
+					<div class="field-description">Ollama model used to generate embeddings. Select from available models or type a custom name.</div>
+					<div class="input-with-dropdown">
+						<input id="cbEmbeddingModel" type="text" class="model-input" placeholder="nomic-embed-text" />
+						<div id="cbEmbeddingModelDropdown" class="model-input-dropdown">
+							<div class="dropdown-header">Select Embedding Model</div>
+							<div class="dropdown-content">
+								<!-- Embedding model options will be inserted here -->
+							</div>
+						</div>
+					</div>
+				</div>
+				<div class="field">
+					<label for="cbEmbeddingDimensions">Embedding Dimensions</label>
+					<div class="field-description">Vector dimensionality of the embedding model.</div>
+					<input id="cbEmbeddingDimensions" type="number" min="1" placeholder="768" />
+				</div>
+				<div class="field">
+					<label for="cbCollection">Collection</label>
+					<div class="field-description">Qdrant collection used for the index. Select from existing collections or type a custom name.</div>
+					<div class="input-with-dropdown">
+						<input id="cbCollection" type="text" class="model-input" placeholder="oaicopilot_codebase" />
+						<div id="cbCollectionDropdown" class="model-input-dropdown">
+							<div class="dropdown-header">Select Collection</div>
+							<div class="dropdown-content">
+								<!-- Collection options will be inserted here -->
+							</div>
+						</div>
+					</div>
+				</div>
+			</div>
+			<div class="retry-config">
+				<h3>Chunking &amp; Search</h3>
+				<div class="row">
+					<div class="field">
+						<label for="cbChunkLines">Chunk Lines</label>
+						<div class="field-description">Number of lines per chunk.</div>
+						<input id="cbChunkLines" type="number" min="1" placeholder="120" />
+					</div>
+					<div class="field">
+						<label for="cbChunkOverlap">Chunk Overlap</label>
+						<div class="field-description">Overlapping lines between consecutive chunks.</div>
+						<input id="cbChunkOverlap" type="number" min="0" placeholder="20" />
+					</div>
+					<div class="field">
+						<label for="cbMaxFileBytes">Max File Bytes</label>
+						<div class="field-description">Skip files larger than this size. Accepts plain bytes or K/M suffix (e.g. 1000000, 1M, 512K).</div>
+						<input id="cbMaxFileBytes" type="text" placeholder="1000000 or 1M" />
+					</div>
+					<div class="field">
+						<label for="cbSearchLimit">Search Limit</label>
+						<div class="field-description">Maximum number of results returned per search.</div>
+						<input id="cbSearchLimit" type="number" min="1" placeholder="8" />
+					</div>
+				</div>
+			</div>
+			<div class="retry-config">
+				<h3>File Filters</h3>
+				<div class="row">
+					<div class="field">
+						<label for="cbInclude">Include (comma separated globs)</label>
+						<div class="field-description">Globs of files to index.</div>
+						<input id="cbInclude" type="text" placeholder="**/*" />
+					</div>
+					<div class="field">
+						<label for="cbExclude">Exclude (comma separated globs)</label>
+						<div class="field-description">Globs of files to skip.</div>
+						<input id="cbExclude" type="text" placeholder="**/node_modules/**,**/.git/**" />
+					</div>
+				</div>
+			</div>
+			<div class="block-gap">
+				<button id="saveCodebaseIndex">Save Codebase Index Settings</button>
+			</div>
+		</section>
+
 		<section id="providerManagementSection">
 			<div class="section-header">
 				<h2>Provider Management</h2>

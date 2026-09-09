@@ -1,5 +1,20 @@
 # Change Log
 
+## 0.5.0 (2026-09-08) - RSloot2000 fork
+
+- Feat(codebase): Add local semantic workspace indexing backed by a configurable Ollama embedding endpoint and Qdrant collection.
+- Feat(tools): Register `oaicopilot_codebase_status`, `oaicopilot_codebase_index`, `oaicopilot_codebase_update`, and `oaicopilot_codebase_search` as discoverable VS Code Language Model Tools.
+- Feat(commands): Add Command Palette actions for checking, building, updating, and searching the index manually.
+- Index each workspace in isolation, track changed files for incremental updates, respect configurable include/exclude globs, and return compact source excerpts with line numbers.
+
+## 0.4.3 (2026-09-08) - RSloot2000 fork
+
+- Fix(openai): Abort the active OpenAI Chat Completions HTTP request when VS Code cancels a response. This makes Stop and steering interruption work while a model is emitting hidden reasoning.
+- Chore(dependencies): Override vulnerable transitive Mocha dependencies with `diff` 8.0.3 and `serialize-javascript` 7.0.5. `npm audit` reports zero vulnerabilities.
+- Docs: Identify this distribution as the RSloot2000 fork and document local VSIX installation.
+
+This fork is based on [JohnnyZ93/oai-compatible-copilot](https://github.com/JohnnyZ93/oai-compatible-copilot). The cancellation fix in this release applies to `apiMode: "openai"`.
+
 ## 0.4.2 (2026-05-19)
 
 - Feat(anthropic): Enable prompt caching. The system prompt and the last tool definition are now marked with `cache_control: { type: "ephemeral" }`, and in-message `cache_control` markers emitted by Copilot (`LanguageModelDataPart` with mimeType `"cache_control"`) are forwarded to Anthropic instead of being silently dropped. Add a per-model `cache_control` boolean (default `true`) to disable it for providers that reject the field.

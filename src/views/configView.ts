@@ -19,6 +19,21 @@ interface InitPayload {
 	commitLanguage: string;
 	models: HFModelItem[];
 	providerKeys: Record<string, string>;
+	codebaseIndex: CodebaseIndexConfig;
+}
+
+interface CodebaseIndexConfig {
+	qdrantUrl: string;
+	ollamaUrl: string;
+	embeddingModel: string;
+	embeddingDimensions: number;
+	collection: string;
+	include: string;
+	exclude: string;
+	chunkLines: number;
+	chunkOverlap: number;
+	maxFileBytes: number;
+	searchLimit: number;
 }
 
 interface ExportConfig {
@@ -81,12 +96,19 @@ type IncomingMessage =
 	| { type: "deleteModel"; modelId: string }
 	| { type: "requestConfirm"; id: string; message: string; action: string }
 	| { type: "exportConfig" }
-	| { type: "importConfig" };
+	| { type: "importConfig" }
+	| { type: "saveCodebaseIndexConfig"; config: CodebaseIndexConfig }
+	| { type: "fetchEmbeddingModels"; ollamaUrl: string }
+	| { type: "fetchCollections"; qdrantUrl: string };
 
 type OutgoingMessage =
 	| { type: "init"; payload: InitPayload }
 	| { type: "modelsFetched"; models: HFModelItem[] }
-	| { type: "confirmResponse"; id: string; confirmed: boolean };
+	| { type: "confirmResponse"; id: string; confirmed: boolean }
+	| { type: "embeddingModelsFetched"; models: string[] }
+	| { type: "embeddingModelsFetchError"; error: string }
+	| { type: "collectionsFetched"; collections: string[] }
+	| { type: "collectionsFetchError"; error: string };
 
 export class ConfigViewPanel {
 	public static currentPanel: ConfigViewPanel | undefined;
@@ -217,6 +239,31 @@ export class ConfigViewPanel {
 			case "importConfig":
 				await this.importConfig();
 				break;
+			case "saveCodebaseIndexConfig":
+				await this.saveCodebaseIndexConfig(message.config);
+				break;
+			case "fetchEmbeddingModels": {
+				try {
+					const models = await this.fetchEmbeddingModels(message.ollamaUrl);
+					this.panel.webview.postMessage({ type: "embeddingModelsFetched", models });
+				} catch (err) {
+					console.error("[oaicopilot] fetchEmbeddingModels failed", err);
+					const errorMessage = err instanceof Error ? err.message : String(err);
+					this.panel.webview.postMessage({ type: "embeddingModelsFetchError", error: errorMessage });
+				}
+				break;
+			}
+			case "fetchCollections": {
+				try {
+					const collections = await this.fetchCollections(message.qdrantUrl);
+					this.panel.webview.postMessage({ type: "collectionsFetched", collections });
+				} catch (err) {
+					console.error("[oaicopilot] fetchCollections failed", err);
+					const errorMessage = err instanceof Error ? err.message : String(err);
+					this.panel.webview.postMessage({ type: "collectionsFetchError", error: errorMessage });
+				}
+				break;
+			}
 			default:
 				break;
 		}
@@ -283,6 +330,7 @@ export class ConfigViewPanel {
 		const commitModel = foundModel ? `${foundModel.id}${foundModel.configId ? "::" + foundModel.configId : ""}` : "";
 		const commitLanguage = config.get<string>("oaicopilot.commitLanguage", "English");
 		const readFileLines = config.get<number>("oaicopilot.readFileLines", 0);
+		const codebaseIndex = this.getCodebaseIndexConfig();
 		const payload: InitPayload = {
 			baseUrl,
 			apiKey,
@@ -293,6 +341,7 @@ export class ConfigViewPanel {
 			commitLanguage,
 			models,
 			providerKeys,
+			codebaseIndex,
 		};
 		this.panel.webview.postMessage({ type: "init", payload });
 	}
@@ -338,6 +387,62 @@ export class ConfigViewPanel {
 		vscode.window.showInformationMessage(
 			"OAI Compatible base URL, Delay, Retry and API Key have been saved to global settings."
 		);
+		// Send refresh signal to frontend
+		await this.sendInit();
+	}
+
+	private getCodebaseIndexConfig(): CodebaseIndexConfig {
+		const config = vscode.workspace.getConfiguration("oaicopilot.codebaseIndex");
+		return {
+			qdrantUrl: config.get<string>("qdrantUrl", ""),
+			ollamaUrl: config.get<string>("ollamaUrl", ""),
+			embeddingModel: config.get<string>("embeddingModel", "nomic-embed-text"),
+			embeddingDimensions: config.get<number>("embeddingDimensions", 768),
+			collection: config.get<string>("collection", "oaicopilot_codebase"),
+			include: config.get<string>("include", ""),
+			exclude: config.get<string>("exclude", ""),
+			chunkLines: config.get<number>("chunkLines", 120),
+			chunkOverlap: config.get<number>("chunkOverlap", 20),
+			maxFileBytes: config.get<number>("maxFileBytes", 1_000_000),
+			searchLimit: config.get<number>("searchLimit", 8),
+		};
+	}
+
+	private async fetchEmbeddingModels(ollamaUrl: string): Promise<string[]> {
+		const base = ollamaUrl.replace(/\/+$/, "");
+		const res = await fetch(`${base}/api/tags`);
+		if (!res.ok) {
+			throw new Error(`Ollama /api/tags returned ${res.status}`);
+		}
+		const data = (await res.json()) as { models?: Array<{ name: string }> };
+		return (data.models ?? []).map((m) => m.name);
+	}
+
+	private async fetchCollections(qdrantUrl: string): Promise<string[]> {
+		const base = qdrantUrl.replace(/\/+$/, "");
+		const res = await fetch(`${base}/collections`);
+		if (!res.ok) {
+			throw new Error(`Qdrant /collections returned ${res.status}`);
+		}
+		const data = (await res.json()) as { result?: { collections?: Array<{ name: string }> } };
+		return (data.result?.collections ?? []).map((c) => c.name);
+	}
+
+	private async saveCodebaseIndexConfig(cfg: CodebaseIndexConfig) {
+		const config = vscode.workspace.getConfiguration("oaicopilot.codebaseIndex");
+		await config.update("qdrantUrl", cfg.qdrantUrl.trim(), vscode.ConfigurationTarget.Global);
+		await config.update("ollamaUrl", cfg.ollamaUrl.trim(), vscode.ConfigurationTarget.Global);
+		await config.update("embeddingModel", cfg.embeddingModel.trim(), vscode.ConfigurationTarget.Global);
+		await config.update("embeddingDimensions", cfg.embeddingDimensions, vscode.ConfigurationTarget.Global);
+		await config.update("collection", cfg.collection.trim(), vscode.ConfigurationTarget.Global);
+		await config.update("include", cfg.include, vscode.ConfigurationTarget.Global);
+		await config.update("exclude", cfg.exclude, vscode.ConfigurationTarget.Global);
+		await config.update("chunkLines", cfg.chunkLines, vscode.ConfigurationTarget.Global);
+		await config.update("chunkOverlap", cfg.chunkOverlap, vscode.ConfigurationTarget.Global);
+		await config.update("maxFileBytes", cfg.maxFileBytes, vscode.ConfigurationTarget.Global);
+		await config.update("searchLimit", cfg.searchLimit, vscode.ConfigurationTarget.Global);
+
+		vscode.window.showInformationMessage("Codebase index settings have been saved to global settings.");
 		// Send refresh signal to frontend
 		await this.sendInit();
 	}

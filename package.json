@@ -1,8 +1,8 @@
 {
 	"name": "oai-compatible-copilot",
-	"publisher": "johnny-zhao",
-	"displayName": "OAI Compatible Provider for Copilot",
-	"description": "An extension that integrates OpenAI/Ollama/Anthropic/Gemini API Providers into GitHub Copilot Chat",
+	"publisher": "RSloot2000",
+	"displayName": "OAI Compatible Provider for Copilot (RSloot2000 Fork)",
+	"description": "A personal fork of OAI Compatible Provider for Copilot with reliable OpenAI streaming cancellation",
 	"icon": "assets/logo.png",
 	"keywords": [
 		"ai",
@@ -23,9 +23,10 @@
 	],
 	"repository": {
 		"type": "git",
-		"url": "https://github.com/JohnnyZ93/oai-compatible-copilot"
+		"url": "https://github.com/RSloot2000/oai-compatible-copilot"
 	},
-	"version": "0.4.2",
+	"homepage": "https://github.com/RSloot2000/oai-compatible-copilot#readme",
+	"version": "0.5.1",
 	"engines": {
 		"vscode": "^1.120.0"
 	},
@@ -35,13 +36,13 @@
 	],
 	"badges": [
 		{
-			"url": "https://img.shields.io/github/stars/JohnnyZ93/oai-compatible-copilot?style=social",
+			"url": "https://img.shields.io/github/stars/RSloot2000/oai-compatible-copilot?style=social",
 			"description": "Star oai-compatible-copilot on Github",
-			"href": "https://github.com/JohnnyZ93/oai-compatible-copilot"
+			"href": "https://github.com/RSloot2000/oai-compatible-copilot"
 		}
 	],
 	"bugs": {
-		"url": "https://github.com/JohnnyZ93/oai-compatible-copilot/issues"
+		"url": "https://github.com/RSloot2000/oai-compatible-copilot/issues"
 	},
 	"license": "MIT",
 	"enabledApiProposals": [
@@ -53,6 +54,76 @@
 				"vendor": "oaicopilot",
 				"displayName": "OAI Compatible",
 				"managementCommand": "oaicopilot.setApikey"
+			}
+		],
+		"languageModelTools": [
+			{
+				"name": "oaicopilot_codebase_status",
+				"displayName": "Codebase Index Status",
+				"toolReferenceName": "codebaseStatus",
+				"canBeReferencedInPrompt": true,
+				"tags": ["codebase", "search", "index"],
+				"userDescription": "Check whether the current workspace has a usable local semantic index.",
+				"modelDescription": "Check the local semantic codebase index before searching it. Call this first when indexed code context may be useful. If indexed is false, call oaicopilot_codebase_index. If stale is true, call oaicopilot_codebase_update before searching.",
+				"inputSchema": {
+					"type": "object",
+					"properties": {},
+					"additionalProperties": false
+				}
+			},
+			{
+				"name": "oaicopilot_codebase_index",
+				"displayName": "Build Codebase Index",
+				"toolReferenceName": "codebaseIndex",
+				"canBeReferencedInPrompt": true,
+				"tags": ["codebase", "search", "index"],
+				"userDescription": "Build a new local semantic index for the current workspace.",
+				"modelDescription": "Build or completely rebuild the current workspace's semantic code index using the configured Ollama embedding model and Qdrant server. Call only when status reports that no index exists or when the user explicitly requests a full rebuild.",
+				"inputSchema": {
+					"type": "object",
+					"properties": {},
+					"additionalProperties": false
+				}
+			},
+			{
+				"name": "oaicopilot_codebase_update",
+				"displayName": "Update Codebase Index",
+				"toolReferenceName": "codebaseUpdate",
+				"canBeReferencedInPrompt": true,
+				"tags": ["codebase", "search", "index"],
+				"userDescription": "Incrementally update the local semantic index for changed workspace files.",
+				"modelDescription": "Update changed and deleted files in an existing semantic codebase index. Prefer this over a full rebuild when oaicopilot_codebase_status reports stale true.",
+				"inputSchema": {
+					"type": "object",
+					"properties": {},
+					"additionalProperties": false
+				}
+			},
+			{
+				"name": "oaicopilot_codebase_search",
+				"displayName": "Search Codebase Index",
+				"toolReferenceName": "codebaseSearch",
+				"canBeReferencedInPrompt": true,
+				"tags": ["codebase", "search", "semantic"],
+				"userDescription": "Search the current workspace's local semantic code index.",
+				"modelDescription": "Semantically search the current workspace and return relevant code or documentation excerpts with paths and line numbers. Use this before broad file searches when you need to locate behavior, concepts, or implementations but do not know the exact symbol or filename.",
+				"inputSchema": {
+					"type": "object",
+					"properties": {
+						"query": {
+							"type": "string",
+							"description": "A concise natural-language description of the code, behavior, symbol, or documentation to find."
+						},
+						"limit": {
+							"type": "integer",
+							"minimum": 1,
+							"maximum": 20,
+							"description": "Maximum number of matching chunks to return."
+						}
+					},
+					"required": ["query"],
+					"additionalProperties": false
+				}
 			}
 		],
 		"commands": [
@@ -72,6 +143,11 @@
 				"title": "Open Configuration UI"
 			},
 			{
+				"command": "oaicopilot.showMenu",
+				"category": "OAICopilot",
+				"title": "Show Status Menu"
+			},
+			{
 				"command": "oaicopilot.generateGitCommitMessage",
 				"title": "Generate Commit Message with OAICopilot",
 				"category": "OAICopilot",
@@ -82,6 +158,26 @@
 				"title": "Generate Commit Message with OAICopilot - Stop",
 				"category": "OAICopilot",
 				"icon": "$(debug-stop)"
+			},
+			{
+				"command": "oaicopilot.codebaseStatus",
+				"title": "Codebase Index: Show Status",
+				"category": "OAICopilot"
+			},
+			{
+				"command": "oaicopilot.codebaseIndex",
+				"title": "Codebase Index: Build",
+				"category": "OAICopilot"
+			},
+			{
+				"command": "oaicopilot.codebaseUpdate",
+				"title": "Codebase Index: Update",
+				"category": "OAICopilot"
+			},
+			{
+				"command": "oaicopilot.codebaseSearch",
+				"title": "Codebase Index: Search",
+				"category": "OAICopilot"
 			}
 		],
 		"menus": {
@@ -460,6 +556,78 @@
 					"minimum": 0,
 					"maximum": 10000,
 					"description": "Number of lines to read when using `read_file` tool. Large lines may cost more tokens. Default is 0, let model decide lines."
+				},
+				"oaicopilot.codebaseIndex.qdrantUrl": {
+					"type": "string",
+					"default": "",
+					"description": "Base URL of the Qdrant server used for codebase vectors."
+				},
+				"oaicopilot.codebaseIndex.ollamaUrl": {
+					"type": "string",
+					"default": "",
+					"description": "Base URL of the Ollama server used to create embeddings."
+				},
+				"oaicopilot.codebaseIndex.embeddingModel": {
+					"type": "string",
+					"default": "nomic-embed-text",
+					"description": "Ollama embedding model."
+				},
+				"oaicopilot.codebaseIndex.embeddingDimensions": {
+					"type": "number",
+					"default": 768,
+					"minimum": 1,
+					"description": "Vector dimensions produced by the embedding model."
+				},
+				"oaicopilot.codebaseIndex.collection": {
+					"type": "string",
+					"default": "oaicopilot_codebase",
+					"description": "Qdrant collection dedicated to this extension."
+				},
+				"oaicopilot.codebaseIndex.include": {
+					"type": "string",
+					"default": "",
+					"description": "Glob selecting text files to index. Empty means all files."
+				},
+				"oaicopilot.codebaseIndex.exclude": {
+					"type": "string",
+					"default": "",
+					"description": "Glob excluding files and directories from indexing. Empty means nothing excluded."
+				},
+				"oaicopilot.codebaseIndex.chunkLines": {
+					"type": "number",
+					"default": 120,
+					"minimum": 20,
+					"description": "Maximum lines per indexed chunk."
+				},
+				"oaicopilot.codebaseIndex.chunkOverlap": {
+					"type": "number",
+					"default": 20,
+					"minimum": 0,
+					"description": "Lines repeated between adjacent chunks."
+				},
+				"oaicopilot.codebaseIndex.maxFileBytes": {
+					"type": "number",
+					"default": 1000000,
+					"minimum": 1024,
+					"description": "Maximum file size in bytes to index."
+				},
+				"oaicopilot.codebaseIndex.searchLimit": {
+					"type": "number",
+					"default": 8,
+					"minimum": 1,
+					"maximum": 20,
+					"description": "Default maximum number of semantic search results."
+				},
+				"oaicopilot.codebaseIndex.autoUpdate": {
+					"type": "boolean",
+					"default": true,
+					"description": "Automatically re-index changed files in the background (watchdog)."
+				},
+				"oaicopilot.codebaseIndex.autoUpdateDebounceMs": {
+					"type": "number",
+					"default": 3000,
+					"minimum": 500,
+					"description": "Milliseconds to wait after the last file change before triggering an auto-update."
 				}
 			}
 		}

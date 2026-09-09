@@ -8,6 +8,19 @@ const state = {
 	models: [],
 	providerKeys: {},
 	providerInfo: {},
+	codebaseIndex: {
+		qdrantUrl: "",
+		ollamaUrl: "",
+		embeddingModel: "",
+		embeddingDimensions: 768,
+		collection: "",
+		include: [],
+		exclude: [],
+		chunkLines: 120,
+		chunkOverlap: 20,
+		maxFileBytes: 1000000,
+		searchLimit: 8,
+	},
 };
 
 // Store the action to be performed after confirmation
@@ -22,6 +35,19 @@ const retryEnabledInput = document.getElementById("retryEnabled");
 const maxAttemptsInput = document.getElementById("maxAttempts");
 const intervalMsInput = document.getElementById("intervalMs");
 const statusCodesInput = document.getElementById("statusCodes");
+
+// Codebase index elements
+const cbQdrantUrlInput = document.getElementById("cbQdrantUrl");
+const cbOllamaUrlInput = document.getElementById("cbOllamaUrl");
+const cbEmbeddingModelInput = document.getElementById("cbEmbeddingModel");
+const cbEmbeddingDimensionsInput = document.getElementById("cbEmbeddingDimensions");
+const cbCollectionInput = document.getElementById("cbCollection");
+const cbChunkLinesInput = document.getElementById("cbChunkLines");
+const cbChunkOverlapInput = document.getElementById("cbChunkOverlap");
+const cbMaxFileBytesInput = document.getElementById("cbMaxFileBytes");
+const cbSearchLimitInput = document.getElementById("cbSearchLimit");
+const cbIncludeInput = document.getElementById("cbInclude");
+const cbExcludeInput = document.getElementById("cbExclude");
 
 // Provider management elements
 const providerTableBody = document.getElementById("providerTableBody");
@@ -75,6 +101,55 @@ const modelErrorElement = document.getElementById("modelError");
 const dropdownContent = modelIdDropdown.querySelector(".dropdown-content");
 const dropdownHeader = modelIdDropdown.querySelector(".dropdown-header");
 
+// Embedding model dropdown elements
+const cbEmbeddingModelDropdown = document.getElementById("cbEmbeddingModelDropdown");
+const cbEmbeddingModelDropdownContent = cbEmbeddingModelDropdown.querySelector(".dropdown-content");
+const cbEmbeddingModelDropdownHeader = cbEmbeddingModelDropdown.querySelector(".dropdown-header");
+
+// Collection dropdown elements
+const cbCollectionDropdown = document.getElementById("cbCollectionDropdown");
+const cbCollectionDropdownContent = cbCollectionDropdown.querySelector(".dropdown-content");
+const cbCollectionDropdownHeader = cbCollectionDropdown.querySelector(".dropdown-header");
+
+// Parse a byte-size input that may use K/M/G suffixes (case-insensitive).
+// Returns the number of bytes, or 0 if the input is empty/invalid.
+function parseByteSize(value) {
+	if (value === null || value === undefined) {
+		return 0;
+	}
+	const trimmed = String(value).trim();
+	if (trimmed === "") {
+		return 0;
+	}
+	const match = trimmed.match(/^(\d+(?:\.\d+)?)\s*([kKmMgG]?)$/);
+	if (!match) {
+		return 0;
+	}
+	const num = parseFloat(match[1]);
+	const suffix = match[2].toLowerCase();
+	const multiplier = suffix === "k" ? 1024 : suffix === "m" ? 1024 * 1024 : suffix === "g" ? 1024 * 1024 * 1024 : 1;
+	return Math.round(num * multiplier);
+}
+
+// Format a byte count for display, using K/M/G suffixes when it divides evenly.
+function formatByteSize(bytes) {
+	const n = Number(bytes) || 0;
+	if (n === 0) {
+		return "0";
+	}
+	const units = [
+		{ size: 1024 * 1024 * 1024, suffix: "G" },
+		{ size: 1024 * 1024, suffix: "M" },
+		{ size: 1024, suffix: "K" },
+	];
+	for (const unit of units) {
+		if (n >= unit.size && n % unit.size === 0) {
+			return `${n / unit.size}${unit.suffix}`;
+		}
+	}
+	return String(n);
+}
+
 // Global Configuration save button event listener
 document.getElementById("saveBase").addEventListener("click", () => {
 	const retry = {
@@ -101,6 +176,26 @@ document.getElementById("saveBase").addEventListener("click", () => {
 	});
 });
 
+// Codebase index save button event listener
+document.getElementById("saveCodebaseIndex").addEventListener("click", () => {
+	vscode.postMessage({
+		type: "saveCodebaseIndexConfig",
+		config: {
+			qdrantUrl: cbQdrantUrlInput.value,
+			ollamaUrl: cbOllamaUrlInput.value,
+			embeddingModel: cbEmbeddingModelInput.value,
+			embeddingDimensions: parseInt(cbEmbeddingDimensionsInput.value) || 768,
+			collection: cbCollectionInput.value,
+			include: cbIncludeInput.value,
+			exclude: cbExcludeInput.value,
+			chunkLines: parseInt(cbChunkLinesInput.value) || 120,
+			chunkOverlap: parseInt(cbChunkOverlapInput.value) || 0,
+			maxFileBytes: parseByteSize(cbMaxFileBytesInput.value),
+			searchLimit: parseInt(cbSearchLimitInput.value) || 8,
+		},
+	});
+});
+
 const handleRefresh = () => {
 	// Hide the model form if it's visible
 	if (modelFormSection.style.display !== "none") {
@@ -123,6 +218,7 @@ document.getElementById("importConfig").addEventListener("click", () => {
 document.getElementById("refreshGlobalConfig").addEventListener("click", handleRefresh);
 document.getElementById("refreshProviders").addEventListener("click", handleRefresh);
 document.getElementById("refreshModels").addEventListener("click", handleRefresh);
+document.getElementById("refreshCodebaseIndex").addEventListener("click", handleRefresh);
 
 // Add Provider button event listener
 document.getElementById("addProvider").addEventListener("click", () => {
@@ -272,7 +368,7 @@ window.addEventListener("message", (event) => {
 
 	switch (message.type) {
 		case "init":
-			const { baseUrl, apiKey, delay, readFileLines, retry, commitModel, models, providerKeys, commitLanguage } =
+			const { baseUrl, apiKey, delay, readFileLines, retry, commitModel, models, providerKeys, commitLanguage, codebaseIndex } =
 				message.payload;
 			state.baseUrl = baseUrl;
 			state.apiKey = apiKey;
@@ -287,6 +383,7 @@ window.addEventListener("message", (event) => {
 			state.models = models || [];
 			state.commitModel = commitModel || "";
 			state.providerKeys = providerKeys || {};
+			state.codebaseIndex = codebaseIndex || state.codebaseIndex;
 
 			// Update base configuration
 			baseUrlInput.value = baseUrl || "";
@@ -303,13 +400,52 @@ window.addEventListener("message", (event) => {
 			commitModelInput.value = state.commitModel || "";
 			commitLanguageInput.value = commitLanguage;
 
+			// Populate codebase index configuration
+			const cb = state.codebaseIndex;
+			cbQdrantUrlInput.value = cb.qdrantUrl || "";
+			cbOllamaUrlInput.value = cb.ollamaUrl || "";
+			cbEmbeddingModelInput.value = cb.embeddingModel || "";
+			cbEmbeddingDimensionsInput.value = cb.embeddingDimensions || 768;
+			cbCollectionInput.value = cb.collection || "";
+			cbChunkLinesInput.value = cb.chunkLines || 120;
+			cbChunkOverlapInput.value = cb.chunkOverlap || 0;
+			cbMaxFileBytesInput.value = formatByteSize(cb.maxFileBytes);
+			cbSearchLimitInput.value = cb.searchLimit || 8;
+			cbIncludeInput.value = typeof cb.include === "string" ? cb.include : (cb.include || []).join(",");
+			cbExcludeInput.value = typeof cb.exclude === "string" ? cb.exclude : (cb.exclude || []).join(",");
+
 			// Render provider and model management
 			renderProviders();
 			renderModels();
+
+			// Fetch available embedding models from Ollama
+			if (cb.ollamaUrl) {
+				vscode.postMessage({ type: "fetchEmbeddingModels", ollamaUrl: cb.ollamaUrl });
+			}
+			// Fetch existing Qdrant collections
+			if (cb.qdrantUrl) {
+				vscode.postMessage({ type: "fetchCollections", qdrantUrl: cb.qdrantUrl });
+			}
 			break;
 		case "modelsFetched":
 			// Handle the response from fetchModels
 			populateModelIdDropdown(message.models);
+			break;
+		case "embeddingModelsFetched":
+			populateEmbeddingModelDropdown(message.models);
+			break;
+		case "embeddingModelsFetchError":
+			cbEmbeddingModelDropdownHeader.textContent = "Error fetching models";
+			cbEmbeddingModelDropdownContent.innerHTML = `<div class="dropdown-option error">Failed to fetch models. Check the Developer Console for details.</div>`;
+			console.error("[oaicopilot] Failed to fetch embedding models:", message.error);
+			break;
+		case "collectionsFetched":
+			populateCollectionDropdown(message.collections);
+			break;
+		case "collectionsFetchError":
+			cbCollectionDropdownHeader.textContent = "Error fetching collections";
+			cbCollectionDropdownContent.innerHTML = `<div class="dropdown-option error">Failed to fetch collections. Check the Developer Console for details.</div>`;
+			console.error("[oaicopilot] Failed to fetch collections:", message.error);
 			break;
 		case "modelsFetchError":
 			// Handle error from fetchModels
@@ -810,6 +946,84 @@ function populateModelIdDropdown(models) {
 	});
 }
 
+// Function to populate the embedding model dropdown
+function populateEmbeddingModelDropdown(models) {
+	const modelsArray = Array.from(models || []);
+
+	// Clear existing options
+	cbEmbeddingModelDropdownContent.innerHTML = "";
+
+	if (!modelsArray.length) {
+		cbEmbeddingModelDropdownHeader.textContent = "No models available";
+		return;
+	}
+
+	cbEmbeddingModelDropdownHeader.textContent = `Select Embedding Model (${modelsArray.length} available)`;
+
+	// Create option elements
+	modelsArray.forEach((model) => {
+		const option = document.createElement("div");
+		option.className = "dropdown-option";
+		option.textContent = model;
+		option.dataset.modelId = model;
+
+		// Add click event
+		option.addEventListener("click", () => {
+			cbEmbeddingModelInput.value = model;
+			cbEmbeddingModelDropdown.classList.remove("show");
+
+			// Remove selection from all options
+			cbEmbeddingModelDropdownContent.querySelectorAll(".dropdown-option").forEach((opt) => {
+				opt.classList.remove("selected");
+			});
+
+			// Add selection to clicked option
+			option.classList.add("selected");
+		});
+
+		cbEmbeddingModelDropdownContent.appendChild(option);
+	});
+}
+
+// Function to populate the Qdrant collection dropdown
+function populateCollectionDropdown(collections) {
+	const collectionsArray = Array.from(collections || []);
+
+	// Clear existing options
+	cbCollectionDropdownContent.innerHTML = "";
+
+	if (!collectionsArray.length) {
+		cbCollectionDropdownHeader.textContent = "No collections available";
+		return;
+	}
+
+	cbCollectionDropdownHeader.textContent = `Select Collection (${collectionsArray.length} available)`;
+
+	// Create option elements
+	collectionsArray.forEach((collection) => {
+		const option = document.createElement("div");
+		option.className = "dropdown-option";
+		option.textContent = collection;
+		option.dataset.collectionName = collection;
+
+		// Add click event
+		option.addEventListener("click", () => {
+			cbCollectionInput.value = collection;
+			cbCollectionDropdown.classList.remove("show");
+
+			// Remove selection from all options
+			cbCollectionDropdownContent.querySelectorAll(".dropdown-option").forEach((opt) => {
+				opt.classList.remove("selected");
+			});
+
+			// Add selection to clicked option
+			option.classList.add("selected");
+		});
+
+		cbCollectionDropdownContent.appendChild(option);
+	});
+}
+
 // Function to populate the commit model dropdown
 function populateCommitModelDropdown() {
 	// Clear existing options except the first "None" option
@@ -948,6 +1162,102 @@ function initDropdownEvents() {
 	document.addEventListener("click", (event) => {
 		if (!modelIdDropdown.contains(event.target) && event.target !== modelIdInput) {
 			hideDropdown();
+		}
+		if (!cbEmbeddingModelDropdown.contains(event.target) && event.target !== cbEmbeddingModelInput) {
+			cbEmbeddingModelDropdown.classList.remove("show");
+		}
+		if (!cbCollectionDropdown.contains(event.target) && event.target !== cbCollectionInput) {
+			cbCollectionDropdown.classList.remove("show");
+		}
+	});
+
+	// Embedding model dropdown: show on focus
+	cbEmbeddingModelInput.addEventListener("focus", () => {
+		if (cbEmbeddingModelDropdownContent.children.length > 0) {
+			cbEmbeddingModelDropdown.classList.add("show");
+		}
+	});
+
+	// Embedding model dropdown: keyboard navigation
+	cbEmbeddingModelInput.addEventListener("keydown", (event) => {
+		if (event.key === "Escape") {
+			cbEmbeddingModelDropdown.classList.remove("show");
+		} else if (event.key === "ArrowDown" && cbEmbeddingModelDropdown.classList.contains("show")) {
+			event.preventDefault();
+			const options = cbEmbeddingModelDropdownContent.querySelectorAll(".dropdown-option");
+			if (options.length > 0) {
+				const firstOption = options[0];
+				firstOption.focus();
+				firstOption.classList.add("selected");
+			}
+		}
+	});
+
+	// Embedding model dropdown: filter on input
+	cbEmbeddingModelInput.addEventListener("input", () => {
+		cbEmbeddingModelDropdownContent.querySelectorAll(".dropdown-option").forEach((opt) => {
+			opt.classList.remove("selected");
+		});
+		const searchTerm = cbEmbeddingModelInput.value.toLowerCase();
+		const options = cbEmbeddingModelDropdownContent.querySelectorAll(".dropdown-option");
+		options.forEach((option) => {
+			const modelId = option.dataset.modelId.toLowerCase();
+			option.style.display = modelId.includes(searchTerm) ? "block" : "none";
+		});
+		const visibleCount = Array.from(options).filter((opt) => opt.style.display !== "none").length;
+		cbEmbeddingModelDropdownHeader.textContent = `Select Embedding Model (${visibleCount} matching)`;
+	});
+
+	// Re-fetch embedding models when the Ollama URL changes
+	cbOllamaUrlInput.addEventListener("change", () => {
+		const url = cbOllamaUrlInput.value.trim();
+		if (url) {
+			vscode.postMessage({ type: "fetchEmbeddingModels", ollamaUrl: url });
+		}
+	});
+
+	// Collection dropdown: show on focus
+	cbCollectionInput.addEventListener("focus", () => {
+		if (cbCollectionDropdownContent.children.length > 0) {
+			cbCollectionDropdown.classList.add("show");
+		}
+	});
+
+	// Collection dropdown: keyboard navigation
+	cbCollectionInput.addEventListener("keydown", (event) => {
+		if (event.key === "Escape") {
+			cbCollectionDropdown.classList.remove("show");
+		} else if (event.key === "ArrowDown" && cbCollectionDropdown.classList.contains("show")) {
+			event.preventDefault();
+			const options = cbCollectionDropdownContent.querySelectorAll(".dropdown-option");
+			if (options.length > 0) {
+				const firstOption = options[0];
+				firstOption.focus();
+				firstOption.classList.add("selected");
+			}
+		}
+	});
+
+	// Collection dropdown: filter on input
+	cbCollectionInput.addEventListener("input", () => {
+		cbCollectionDropdownContent.querySelectorAll(".dropdown-option").forEach((opt) => {
+			opt.classList.remove("selected");
+		});
+		const searchTerm = cbCollectionInput.value.toLowerCase();
+		const options = cbCollectionDropdownContent.querySelectorAll(".dropdown-option");
+		options.forEach((option) => {
+			const collectionName = option.dataset.collectionName.toLowerCase();
+			option.style.display = collectionName.includes(searchTerm) ? "block" : "none";
+		});
+		const visibleCount = Array.from(options).filter((opt) => opt.style.display !== "none").length;
+		cbCollectionDropdownHeader.textContent = `Select Collection (${visibleCount} matching)`;
+	});
+
+	// Re-fetch Qdrant collections when the Qdrant URL changes
+	cbQdrantUrlInput.addEventListener("change", () => {
+		const url = cbQdrantUrlInput.value.trim();
+		if (url) {
+			vscode.postMessage({ type: "fetchCollections", qdrantUrl: url });
 		}
 	});
 

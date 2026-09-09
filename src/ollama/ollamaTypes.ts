@@ -21,7 +21,14 @@ export interface OllamaRequestBody {
 	model: string;
 	messages: OllamaMessage[];
 	stream?: boolean;
-	think?: boolean | string;
+	/**
+	 * Enable thinking/reasoning for reasoning models.
+	 * - `true`: enable thinking with model default budget
+	 * - `number`: enable thinking with a specific token budget
+	 * - `false`: disable thinking
+	 * @see https://docs.ollama.com/api#generate-a-chat-message
+	 */
+	think?: boolean | number;
 	options?: OllamaModelOptions;
 	tools?: OpenAIFunctionToolDef[];
 }

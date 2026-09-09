@@ -133,6 +133,13 @@ export class OllamaApi extends CommonApi<OllamaMessage, OllamaRequestBody> {
 			}
 		}
 
+		// Enable thinking/reasoning streaming for reasoning models (e.g. Qwen 3, DeepSeek-R1).
+		// When set, Ollama streams thinking tokens in `message.thinking` which VS Code
+		// renders as a collapsible "thinking" block in the chat.
+		if (um?.enable_thinking) {
+			rb.think = um.thinking_budget ? um.thinking_budget : true;
+		}
+
 		// Add tools if provided
 		const toolConfig = convertToolsToOpenAI(options);
 		if (toolConfig.tools) {

@@ -10,8 +10,24 @@
 
 </div>
 
-[![CI](https://github.com/JohnnyZ93/oai-compatible-copilot/actions/workflows/release.yml/badge.svg)](https://github.com/JohnnyZ93/oai-compatible-copilot/actions)
-[![License](https://img.shields.io/github/license/JohnnyZ93/oai-compatible-copilot?color=orange&label=License)](https://github.com/JohnnyZ93/oai-compatible-copilot/blob/main/LICENSE)
+[![CI](https://github.com/RSloot2000/oai-compatible-copilot/actions/workflows/release.yml/badge.svg)](https://github.com/RSloot2000/oai-compatible-copilot/actions)
+[![License](https://img.shields.io/github/license/RSloot2000/oai-compatible-copilot?color=orange&label=License)](https://github.com/RSloot2000/oai-compatible-copilot/blob/main/LICENSE)
+
+> [!NOTE]
+> 这是由 [RSloot2000](https://github.com/RSloot2000) 维护的个人 fork，基于 [JohnnyZ93/oai-compatible-copilot](https://github.com/JohnnyZ93/oai-compatible-copilot)。本 fork 修复了 OpenAI Chat Completions 流的取消行为：VS Code 的停止和 steering 取消操作会立即中止活动的 HTTP 请求，而不是等待下一个数据块。此修复目前仅适用于 `apiMode: "openai"`。
+
+请勿同时启用此 fork 和上游扩展，因为它们注册相同的命令和语言模型供应商。安装前请先禁用或卸载 `johnny-zhao.oai-compatible-copilot`。
+
+### 本地安装此 fork
+
+```bash
+npm ci
+npm run compile
+npm run build
+code --install-extension ./extension.vsix --force
+```
+
+安装后请重新加载 VS Code 窗口。扩展 ID 为 `RSloot2000.oai-compatible-copilot`。
 
 ## ✨ 特性
 - **多 API 支持**：OpenAI/Ollama/Anthropic/Gemini API（ModelScope、SiliconFlow、DeepSeek 等）
@@ -25,6 +41,18 @@
 - **Git 集成**：直接从源代码管理生成提交信息
 - **导入/导出**：轻松分享和备份配置
 - **工具优化**：优化 agent `read_file` 工具处理，避免对大文件读取小片段。
+- **本地代码库索引**：通过自托管 Ollama embedding 服务和 Qdrant 对工作区进行语义搜索。
+
+## 本地代码库索引
+
+此 fork 向 VS Code 注册四个语言模型工具。Copilot 会在 Agent 模式下自动向模型提供工具名称、说明和 JSON 输入格式：
+
+- `#codebaseStatus`：检查当前工作区是否已有索引以及索引是否过期。
+- `#codebaseIndex`：创建或完全重建工作区索引。
+- `#codebaseUpdate`：增量更新已更改的文件并删除已移除文件的向量。
+- `#codebaseSearch`：执行语义搜索并返回文件路径、行号、相关度和源代码片段。
+
+这些工具可以在聊天中通过 `#` 显式选择，也可以由 Agent 自动调用。默认使用 `http://192.168.1.251:8030` 上的 `nomic-embed-text` 和 `http://192.168.1.251:6333` 上的 Qdrant；所有地址、模型、维度、集合、文件 glob 和分块大小都可以在 `oaicopilot.codebaseIndex.*` 设置中修改。
 
 ## 环境要求
 - VS Code 1.104.0 或更高版本。

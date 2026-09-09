@@ -10,8 +10,24 @@ English | [简体中文](README.zh-CN.md)
 
 </div>
 
-[![CI](https://github.com/JohnnyZ93/oai-compatible-copilot/actions/workflows/release.yml/badge.svg)](https://github.com/JohnnyZ93/oai-compatible-copilot/actions)
-[![License](https://img.shields.io/github/license/JohnnyZ93/oai-compatible-copilot?color=orange&label=License)](https://github.com/JohnnyZ93/oai-compatible-copilot/blob/main/LICENSE)
+[![CI](https://github.com/RSloot2000/oai-compatible-copilot/actions/workflows/release.yml/badge.svg)](https://github.com/RSloot2000/oai-compatible-copilot/actions)
+[![License](https://img.shields.io/github/license/RSloot2000/oai-compatible-copilot?color=orange&label=License)](https://github.com/RSloot2000/oai-compatible-copilot/blob/main/LICENSE)
+
+> [!NOTE]
+> This is the personal fork maintained by [RSloot2000](https://github.com/RSloot2000), based on [JohnnyZ93/oai-compatible-copilot](https://github.com/JohnnyZ93/oai-compatible-copilot). It adds reliable cancellation for OpenAI Chat Completions streams: VS Code Stop and steering cancellation now abort the active HTTP request instead of waiting for another streamed chunk. This fix currently applies to models using `apiMode: "openai"`.
+
+Do not enable this fork and the upstream extension at the same time. They register the same commands and language-model provider. Remove or disable `johnny-zhao.oai-compatible-copilot` before installing this fork.
+
+### Install this fork locally
+
+```bash
+npm ci
+npm run compile
+npm run build
+code --install-extension ./extension.vsix --force
+```
+
+Reload the VS Code window after installation. The installed extension ID is `RSloot2000.oai-compatible-copilot`.
 
 ## ✨ Features
 - **Multi-API support**: OpenAI/Ollama/Anthropic/Gemini APIs (ModelScope, SiliconFlow, DeepSeek...)
@@ -25,6 +41,34 @@ English | [简体中文](README.zh-CN.md)
 - **Git integration**: Generate commit messages directly from source control
 - **Import/export**: Easily share and backup configurations
 - **Tools optimization**: Optimize agent `read_file` tool handling, avoid to read small chunks for large file.
+- **Local codebase index**: Semantic workspace search through a self-hosted Ollama embedding endpoint and Qdrant.
+
+## Local Codebase Index
+
+This fork contributes four Language Model Tools to VS Code. Copilot automatically supplies their names, descriptions, and JSON input schemas to models when the tools are available in Agent mode:
+
+- `#codebaseStatus` checks whether the current workspace has an index and whether tracked files changed.
+- `#codebaseIndex` creates or completely rebuilds the workspace index.
+- `#codebaseUpdate` incrementally replaces changed files and removes deleted files.
+- `#codebaseSearch` searches indexed chunks by semantic similarity and returns paths, line numbers, scores, and source excerpts.
+
+The tools can be selected explicitly with `#` in chat or invoked automatically by an agent. The same status, index, update, and search operations are available from the Command Palette under **OAICopilot: Codebase Index**.
+
+The default configuration matches the maintainer's self-hosted setup:
+
+```json
+{
+    "oaicopilot.codebaseIndex.qdrantUrl": "http://192.168.1.251:6333",
+    "oaicopilot.codebaseIndex.ollamaUrl": "http://192.168.1.251:8030",
+    "oaicopilot.codebaseIndex.embeddingModel": "nomic-embed-text",
+    "oaicopilot.codebaseIndex.embeddingDimensions": 768,
+    "oaicopilot.codebaseIndex.collection": "oaicopilot_codebase"
+}
+```
+
+Each workspace is isolated by a stable workspace ID inside the collection. The indexer respects configurable include/exclude globs, skips oversized and binary files, chunks text with overlap, and tracks file modification metadata for incremental updates. Source text is sent only to the configured Ollama server and vectors are stored only in the configured Qdrant server.
+
+For reliable agent behavior, instruct the model to check `oaicopilot_codebase_status` first, build the index only when it does not exist, update it when stale, and use `oaicopilot_codebase_search` for semantic discovery.
 
 ## Requirements
 - VS Code 1.104.0 or higher.
