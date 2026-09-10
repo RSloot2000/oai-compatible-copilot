@@ -2,6 +2,7 @@ import * as vscode from "vscode";
 import type { HFApiMode, HFModelItem } from "../types";
 import { normalizeUserModels, parseModelId } from "../utils";
 import { fetchModels } from "../provideModel";
+import { testConnection } from "../provider";
 import { VersionManager } from "../versionManager";
 
 interface InitPayload {
@@ -99,7 +100,15 @@ type IncomingMessage =
 	| { type: "importConfig" }
 	| { type: "saveCodebaseIndexConfig"; config: CodebaseIndexConfig }
 	| { type: "fetchEmbeddingModels"; ollamaUrl: string }
-	| { type: "fetchCollections"; qdrantUrl: string };
+	| { type: "fetchCollections"; qdrantUrl: string }
+	| {
+			type: "testConnection";
+			baseUrl: string;
+			apiKey: string;
+			apiMode?: HFApiMode | string;
+			modelId?: string;
+			headers?: Record<string, string>;
+	  };
 
 type OutgoingMessage =
 	| { type: "init"; payload: InitPayload }
@@ -108,7 +117,8 @@ type OutgoingMessage =
 	| { type: "embeddingModelsFetched"; models: string[] }
 	| { type: "embeddingModelsFetchError"; error: string }
 	| { type: "collectionsFetched"; collections: string[] }
-	| { type: "collectionsFetchError"; error: string };
+	| { type: "collectionsFetchError"; error: string }
+	| { type: "connectionTestResult"; ok: boolean; message: string; models?: string[] };
 
 export class ConfigViewPanel {
 	public static currentPanel: ConfigViewPanel | undefined;
@@ -262,6 +272,28 @@ export class ConfigViewPanel {
 					const errorMessage = err instanceof Error ? err.message : String(err);
 					this.panel.webview.postMessage({ type: "collectionsFetchError", error: errorMessage });
 				}
+				break;
+			}
+			case "testConnection": {
+				const configuredTimeout = vscode.workspace.getConfiguration().get<number>("oaicopilot.connectTimeout");
+				const connectTimeoutMs =
+					typeof configuredTimeout === "number" && configuredTimeout > 0 ? configuredTimeout : 30000;
+				const result = await testConnection(
+					{
+						baseUrl: message.baseUrl,
+						apiKey: message.apiKey,
+						apiMode: message.apiMode,
+						modelId: message.modelId,
+						headers: message.headers,
+					},
+					connectTimeoutMs
+				);
+				this.panel.webview.postMessage({
+					type: "connectionTestResult",
+					ok: result.ok,
+					message: result.message,
+					models: result.models,
+				});
 				break;
 			}
 			default:

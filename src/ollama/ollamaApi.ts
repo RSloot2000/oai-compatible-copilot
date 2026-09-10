@@ -277,11 +277,17 @@ export class OllamaApi extends CommonApi<OllamaMessage, OllamaRequestBody> {
 
 		// Process regular content
 		if (message.content) {
-			// If we have thinking content and now receiving regular content, end thinking first
+			const content = message.content;
+			// Fallback: some models emit thinking in `content` wrapped in  tags
+			// instead of the dedicated `thinking` field. Capture it as thinking.
+			const xmlRes = this.processXmlThinkBlocks(content, progress);
+			if (xmlRes.emittedAny) {
+				// Thinking was captured from XML tags; nothing to emit as text.
+				return;
+			}
+			// No XML thinking: end any active thinking and emit as regular text.
 			this.reportEndThinking(progress);
-
-			// Emit text content
-			progress.report(new vscode.LanguageModelTextPart(message.content));
+			progress.report(new vscode.LanguageModelTextPart(content));
 		}
 	}
 

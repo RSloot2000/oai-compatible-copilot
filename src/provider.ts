@@ -9,7 +9,7 @@ import {
 	Progress,
 } from "vscode";
 
-import type { HFModelItem } from "./types";
+import type { HFModelItem, HFApiMode } from "./types";
 
 import type { OllamaRequestBody } from "./ollama/ollamaTypes";
 
@@ -27,6 +27,176 @@ import { GeminiApi, buildGeminiGenerateContentUrl, type GeminiToolCallMeta } fro
 import type { GeminiGenerateContentRequest } from "./gemini/geminiTypes";
 import { CommonApi } from "./commonApi";
 import { logger } from "./logger";
+
+/** Default connect timeout (ms) before a request is aborted if no response headers arrive. */
+const DEFAULT_CONNECT_TIMEOUT_MS = 30000;
+
+/**
+ * Combine multiple abort signals into one. Uses `AbortSignal.any` when available
+ * (Node 20.3+), otherwise falls back to a manual combination so the code keeps
+ * working on older extension-host runtimes.
+ */
+function combineSignals(signals: AbortSignal[]): AbortSignal {
+	const anyFn = (AbortSignal as unknown as { any?: (signals: AbortSignal[]) => AbortSignal }).any;
+	if (typeof anyFn === "function") {
+		return anyFn.call(AbortSignal, signals);
+	}
+	const controller = new AbortController();
+	const onAbort = () => controller.abort();
+	for (const s of signals) {
+		if (s.aborted) {
+			controller.abort();
+			break;
+		}
+		s.addEventListener("abort", onAbort, { once: true });
+	}
+	return controller.signal;
+}
+
+/**
+ * Perform a fetch bound to the caller's abort signal AND a connect timeout.
+ * The connect timeout only guards the connection phase (until response headers
+ * arrive); it is cleared as soon as the fetch resolves so long-running streamed
+ * bodies are not aborted. A connect timeout is surfaced as a retryable "timeout"
+ * error; a user cancellation is rethrown as-is (not retryable).
+ */
+async function fetchWithConnectTimeout(
+	url: string,
+	init: RequestInit,
+	abortController: AbortController,
+	connectTimeoutMs: number
+): Promise<Response> {
+	const timeoutController = new AbortController();
+	let timedOut = false;
+	const timer = setTimeout(() => {
+		timedOut = true;
+		timeoutController.abort();
+	}, connectTimeoutMs);
+	const signal = combineSignals([abortController.signal, timeoutController.signal]);
+	try {
+		const res = await fetch(url, { ...init, signal });
+		clearTimeout(timer);
+		return res;
+	} catch (e) {
+		clearTimeout(timer);
+		if (timedOut && !abortController.signal.aborted) {
+			throw new Error(`Request timed out after ${connectTimeoutMs}ms (no response headers received)`);
+		}
+		throw e;
+	}
+}
+
+/** Parameters for a lightweight connection/health check. */
+export interface ConnectionTestParams {
+	baseUrl: string;
+	apiKey: string;
+	apiMode?: HFApiMode | string;
+	modelId?: string;
+	headers?: Record<string, string>;
+}
+
+/** Result of a connection/health check. */
+export interface ConnectionTestResult {
+	ok: boolean;
+	message: string;
+	models?: string[];
+}
+
+/**
+ * Perform a lightweight connection/health check against a model endpoint.
+ * The base URL always comes from user configuration; only the mode-specific
+ * path suffix is fixed (matching the request paths already used per API mode).
+ * Returns a friendly result instead of throwing, so the UI can display it.
+ */
+export async function testConnection(params: ConnectionTestParams, connectTimeoutMs: number): Promise<ConnectionTestResult> {
+	const baseUrl = (params.baseUrl || "").replace(/\/+$/, "");
+	if (!baseUrl || !baseUrl.startsWith("http")) {
+		return { ok: false, message: "No valid base URL configured." };
+	}
+
+	const mode = params.apiMode || "openai";
+	let url: string;
+	switch (mode) {
+		case "ollama":
+			url = `${baseUrl}/api/tags`;
+			break;
+		case "anthropic":
+			url = `${baseUrl}/v1/models`;
+			break;
+		case "gemini":
+			url = `${baseUrl}/v1beta/models`;
+			break;
+		case "openai":
+		case "openai-responses":
+		default:
+			url = `${baseUrl}/models`;
+			break;
+	}
+
+	const headers: Record<string, string> = { ...(params.headers || {}) };
+	if (params.apiKey) {
+		if (mode === "anthropic") {
+			headers["x-api-key"] = params.apiKey;
+			headers["anthropic-version"] = "2023-06-01";
+		} else if (mode === "gemini") {
+			headers["x-goog-api-key"] = params.apiKey;
+		} else {
+			headers["Authorization"] = `Bearer ${params.apiKey}`;
+		}
+	}
+
+	const controller = new AbortController();
+	try {
+		const res = await fetchWithConnectTimeout(url, { method: "GET", headers }, controller, connectTimeoutMs);
+		if (!res.ok) {
+			let detail = "";
+			try {
+				const text = await res.text();
+				if (text) {
+					detail = `: ${text.slice(0, 200)}`;
+				}
+			} catch {
+				// Ignore body read errors; the status line is enough.
+			}
+			return { ok: false, message: `HTTP ${res.status} ${res.statusText}${detail}` };
+		}
+
+		let models: string[] = [];
+		try {
+			const data = await res.json();
+			if (mode === "ollama") {
+				models = (data.models || []).map((m: { name?: string; id?: string }) => m.name || m.id || "");
+			} else if (mode === "gemini") {
+				models = (data.models || []).map((m: { name?: string }) => m.name || "");
+			} else {
+				models = (data.data || []).map((m: { id?: string }) => m.id || "");
+			}
+			models = models.filter((m: string) => !!m);
+		} catch {
+			// Non-JSON body; treat as connected if the status was OK.
+		}
+
+		if (params.modelId && models.length > 0) {
+			const modelId = params.modelId;
+			const found = models.some((m) => m === modelId || m.startsWith(modelId));
+			if (!found) {
+				return {
+					ok: true,
+					message: `Connected, but model "${params.modelId}" was not found in the server's model list.`,
+					models,
+				};
+			}
+		}
+
+		return {
+			ok: true,
+			message: `Connected successfully${models.length ? ` (${models.length} model${models.length === 1 ? "" : "s"} available)` : ""}.`,
+			models,
+		};
+	} catch (e) {
+		return { ok: false, message: `Connection failed: ${e instanceof Error ? e.message : String(e)}` };
+	}
+}
 
 /**
  * VS Code Chat provider backed by Hugging Face Inference Providers.
@@ -198,6 +368,13 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 			// get retry config
 			const retryConfig = createRetryConfig();
 
+			// Connect timeout: abort a request if no response headers arrive in time.
+			const configuredTimeout = config.get<number>("oaicopilot.connectTimeout");
+			const connectTimeoutMs =
+				typeof configuredTimeout === "number" && configuredTimeout > 0
+					? configuredTimeout
+					: DEFAULT_CONNECT_TIMEOUT_MS;
+
 			// prepare headers with custom headers if specified
 			const requestHeaders = CommonApi.prepareHeaders(modelApiKey, apiMode, um?.headers);
 			logger.debug("request.headers", {
@@ -225,11 +402,16 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 					requestBody: ollamaRequestBody,
 				});
 				const response = await executeWithRetry(async () => {
-					const res = await fetch(url, {
-						method: "POST",
-						headers: requestHeaders,
-						body: JSON.stringify(ollamaRequestBody),
-					});
+					const res = await fetchWithConnectTimeout(
+						url,
+						{
+							method: "POST",
+							headers: requestHeaders,
+							body: JSON.stringify(ollamaRequestBody),
+						},
+						abortController,
+						connectTimeoutMs
+					);
 
 					if (!res.ok) {
 						const errorText = await res.text();
@@ -268,11 +450,16 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 					: `${normalizedBaseUrl}/v1/messages`;
 				logger.debug("request.body", { url, requestBody });
 				const response = await executeWithRetry(async () => {
-					const res = await fetch(url, {
-						method: "POST",
-						headers: requestHeaders,
-						body: JSON.stringify(requestBody),
-					});
+					const res = await fetchWithConnectTimeout(
+						url,
+						{
+							method: "POST",
+							headers: requestHeaders,
+							body: JSON.stringify(requestBody),
+						},
+						abortController,
+						connectTimeoutMs
+					);
 
 					if (!res.ok) {
 						const errorText = await res.text();
@@ -345,11 +532,16 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 
 				const sendRequest = async (body: Record<string, unknown>) =>
 					await executeWithRetry(async () => {
-						const res = await fetch(url, {
-							method: "POST",
-							headers: requestHeaders,
-							body: JSON.stringify(body),
-						});
+						const res = await fetchWithConnectTimeout(
+							url,
+							{
+								method: "POST",
+								headers: requestHeaders,
+								body: JSON.stringify(body),
+							},
+							abortController,
+							connectTimeoutMs
+						);
 
 						if (!res.ok) {
 							const errorText = await res.text();
@@ -439,11 +631,16 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 				}
 
 				const response = await executeWithRetry(async () => {
-					const res = await fetch(url, {
-						method: "POST",
-						headers: requestHeaders,
-						body: JSON.stringify(requestBody),
-					});
+					const res = await fetchWithConnectTimeout(
+						url,
+						{
+							method: "POST",
+							headers: requestHeaders,
+							body: JSON.stringify(requestBody),
+						},
+						abortController,
+						connectTimeoutMs
+					);
 
 					if (!res.ok) {
 						const errorText = await res.text();
@@ -478,12 +675,16 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 				const url = `${BASE_URL.replace(/\/+$/, "")}/chat/completions`;
 				logger.debug("request.body", { url, requestBody });
 				const response = await executeWithRetry(async () => {
-					const res = await fetch(url, {
-						method: "POST",
-						headers: requestHeaders,
-						body: JSON.stringify(requestBody),
-						signal: abortController.signal,
-					});
+					const res = await fetchWithConnectTimeout(
+						url,
+						{
+							method: "POST",
+							headers: requestHeaders,
+							body: JSON.stringify(requestBody),
+						},
+						abortController,
+						connectTimeoutMs
+					);
 
 					if (!res.ok) {
 						const errorText = await res.text();

@@ -212,7 +212,8 @@ export abstract class CommonApi<TMessage, TRequestBody> {
 		}
 		// Always clean up state after attempting to end the thinking sequence
 		try {
-			this.flushThinkingBuffer(progress);
+			// Final flush: emit any held-back backticks so none are lost.
+			this.flushThinkingBuffer(progress, true);
 			// End the current thinking sequence with empty content and same ID
 			progress.report(new LanguageModelThinkingPart("", this._currentThinkingId));
 		} catch (e) {
@@ -259,25 +260,53 @@ export abstract class CommonApi<TMessage, TRequestBody> {
 
 	/**
 	 * Flush the thinking buffer to the progress reporter.
+	 *
+	 * A ``` sequence can be split across two 100ms flushes (e.g. the buffer ends
+	 * with a single backtick and the next chunk starts with two). A per-flush
+	 * replace would then never see the full triple, so a markdown code fence
+	 * would form and "escape" the thinking block. To prevent this we hold back
+	 * any trailing run of 1-2 backticks (an incomplete potential fence) until the
+	 * next flush, and break any complete run of 3+ backticks with a zero-width
+	 * space (U+200B) so the renderer never sees a ``` fence.
+	 *
 	 * @param progress Progress reporter for parts.
+	 * @param final When true (end of thinking), emit any held-back backticks and
+	 * clear the buffer so nothing is lost.
 	 */
-	protected flushThinkingBuffer(progress: Progress<LanguageModelResponsePart2>): void {
+	protected flushThinkingBuffer(progress: Progress<LanguageModelResponsePart2>, final: boolean = false): void {
 		// Always clear existing timer first
 		if (this._thinkingFlushTimer) {
 			clearTimeout(this._thinkingFlushTimer);
 			this._thinkingFlushTimer = null;
 		}
 
-		// Flush current buffer if we have content
-		if (this._thinkingBuffer && this._currentThinkingId) {
-			// Sanitize: escape triple backticks so VS Code's markdown renderer
-			// doesn't interpret them as code fences that "escape" the thinking block.
-			// Insert a zero-width space (U+200B) after the first backtick — invisible
-			// to the user but breaks the ``` sequence for markdown parsing.
-			const text = this._thinkingBuffer.replace(/```/g, "`\u200B``");
-			this._thinkingBuffer = "";
+		if (!this._thinkingBuffer || !this._currentThinkingId) {
+			return;
+		}
+
+		let text = this._thinkingBuffer;
+		let heldBack = "";
+
+		if (!final) {
+			// Hold back a trailing run of 1-2 backticks (incomplete potential fence).
+			// A run of 3+ is already a complete fence and is broken below instead.
+			const m = text.match(/`+$/);
+			if (m && m[0].length <= 2) {
+				heldBack = m[0];
+				text = text.slice(0, text.length - heldBack.length);
+			}
+		}
+
+		// Break any run of 3+ backticks with a zero-width space so the markdown
+		// renderer never interprets it as a code fence.
+		text = text.replace(/`{3,}/g, (run) => "`\u200B" + run.slice(1));
+
+		if (text) {
 			progress.report(new LanguageModelThinkingPart(text, this._currentThinkingId));
 		}
+
+		// Keep only the held-back backticks in the buffer (or clear on final flush).
+		this._thinkingBuffer = final ? "" : heldBack;
 	}
 
 	/**

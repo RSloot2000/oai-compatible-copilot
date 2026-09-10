@@ -26,7 +26,7 @@
 		"url": "https://github.com/RSloot2000/oai-compatible-copilot"
 	},
 	"homepage": "https://github.com/RSloot2000/oai-compatible-copilot#readme",
-	"version": "0.5.1",
+	"version": "0.5.2",
 	"engines": {
 		"vscode": "^1.120.0"
 	},
@@ -523,6 +523,12 @@
 					"default": 0,
 					"minimum": 0,
 					"description": "Fixed delay in milliseconds between consecutive requests. Default is 0 (no delay)."
+				},
+				"oaicopilot.connectTimeout": {
+					"type": "number",
+					"default": 30000,
+					"minimum": 1000,
+					"description": "Connect timeout in milliseconds before a request is aborted if no response headers are received. Default is 30000 (30 seconds)."
 				},
 				"oaicopilot.commitLanguage": {
 					"type": "string",
