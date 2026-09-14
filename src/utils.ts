@@ -197,6 +197,60 @@ export function createDataUrl(dataPart: vscode.LanguageModelDataPart): string {
 }
 
 /**
+ * Prune old tool results from messages to reduce prompt size.
+ * Keeps the last `keepLast` tool results intact; replaces older ones with a
+ * short placeholder so the model still knows which tools were called.
+ * @param messages The chat messages to prune.
+ * @param keepLast Number of most-recent tool results to keep intact.
+ * @returns A new messages array with old tool results replaced.
+ */
+export function pruneOldToolResults(
+	messages: readonly vscode.LanguageModelChatRequestMessage[],
+	keepLast: number
+): vscode.LanguageModelChatRequestMessage[] {
+	if (keepLast <= 0) {
+		return [...messages];
+	}
+
+	// Find indices of all tool result parts (in order)
+	const toolResultIndices: number[] = [];
+	for (let i = 0; i < messages.length; i++) {
+		for (const part of messages[i].content ?? []) {
+			if (isToolResultPart(part)) {
+				toolResultIndices.push(i);
+				break; // one tool result per message in practice
+			}
+		}
+	}
+
+	if (toolResultIndices.length <= keepLast) {
+		return [...messages];
+	}
+
+	// Determine which message indices to prune (all except the last `keepLast`)
+	const pruneSet = new Set(toolResultIndices.slice(0, toolResultIndices.length - keepLast));
+
+	return messages.map((msg, idx) => {
+		if (!pruneSet.has(idx)) {
+			return msg;
+		}
+		// Replace tool result parts with a short placeholder
+		const newContent = (msg.content ?? []).map((part) => {
+			if (isToolResultPart(part)) {
+				const placeholder = new vscode.LanguageModelTextPart(
+					`[tool result pruned: ${part.callId}]`
+				);
+				return new vscode.LanguageModelToolResultPart(part.callId, [placeholder]);
+			}
+			return part;
+		});
+		// Reconstruct message with pruned content
+		const m = msg as unknown as Record<string, unknown>;
+		return { ...m, content: newContent } as unknown as vscode.LanguageModelChatRequestMessage;
+	});
+}
+
+/**
  * Type guard for LanguageModelToolResultPart-like values.
  * @param value Unknown value to test.
  */
@@ -304,7 +358,9 @@ export async function executeWithRetry<T>(fn: () => Promise<T>, retryConfig: Ret
 			const isRetryableStatusError = retryableStatusCodes.some((code) => lastError?.message.includes(`[${code}]`));
 			// Check if error is retryable based on network error patterns
 			const isRetryableNetworkError = networkErrorPatterns.some((pattern) => lastError?.message.includes(pattern));
-			const isRetryableError = isRetryableStatusError || isRetryableNetworkError;
+			// Connect timeouts are NOT retryable — the server is too slow, retrying won't help
+			const isConnectTimeout = lastError?.message.includes("no response headers received");
+			const isRetryableError = (isRetryableStatusError || isRetryableNetworkError) && !isConnectTimeout;
 
 			if (!isRetryableError || attempt === maxAttempts) {
 				throw lastError;

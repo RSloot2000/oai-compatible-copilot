@@ -366,8 +366,203 @@ button:not(.secondary):not(.danger) {
 	line-height: 1.4;
 }
 
+/* ============================================================
+   Sidebar (activity bar) compact layout
+   The shared UI is designed for the wide editor tab. In the
+   narrow sidebar (~300px) the multi-column rows and grids
+   collapse on top of each other, so we force a single-column,
+   tighter layout scoped to `body.sidebar`.
+   ============================================================ */
+body.sidebar {
+	padding: 8px;
+}
+body.sidebar section {
+	padding: 10px;
+	margin-bottom: 12px;
+	border-radius: 8px;
+	box-shadow: none;
+}
+body.sidebar h2 {
+	font-size: 14px;
+	margin-top: 4px;
+	margin-bottom: 8px;
+}
+body.sidebar .section-header {
+	flex-direction: column;
+	align-items: flex-start;
+	gap: 8px;
+	margin-bottom: 10px;
+}
+body.sidebar .section-actions {
+	width: 100%;
+}
+body.sidebar .section-actions button {
+	flex: 1;
+	margin-right: 0;
+	padding: 6px 8px;
+	font-size: 12px;
+}
+/* Stack side-by-side fields vertically in the narrow sidebar */
+body.sidebar .row {
+	flex-direction: column;
+	align-items: stretch;
+	gap: 8px;
+}
+body.sidebar .row .field,
+body.sidebar .row input {
+	min-width: 0;
+	width: 100%;
+}
+body.sidebar input[type="text"],
+body.sidebar input[type="password"],
+body.sidebar input[type="number"],
+body.sidebar select {
+	padding: 7px 10px;
+	margin-bottom: 8px;
+	font-size: 13px;
+}
+body.sidebar .field-description {
+	font-size: 11px;
+	margin-bottom: 4px;
+}
+/* Model cards: single column instead of auto-fit grid */
+body.sidebar .card-inputs {
+	grid-template-columns: 1fr;
+	gap: 8px;
+}
+body.sidebar .card-top {
+	flex-direction: column;
+	align-items: flex-start;
+	gap: 6px;
+}
+body.sidebar .pill {
+	width: 100%;
+	justify-content: space-between;
+}
+body.sidebar .pill input {
+	width: 110px;
+}
+body.sidebar .model-card {
+	padding: 8px;
+	border-radius: 8px;
+}
+body.sidebar .provider-row {
+	flex-direction: column;
+	align-items: stretch;
+	gap: 6px;
+}
+/* Sidebar: transform tables into stacked cards */
+body.sidebar .table-container {
+	overflow-x: visible;
+}
+body.sidebar table {
+	display: block;
+	width: 100%;
+}
+body.sidebar thead {
+	display: none;
+}
+body.sidebar tbody {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+}
+body.sidebar tr {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	padding: 10px;
+	border: 1px solid var(--vscode-editorWidget-border);
+	border-radius: 8px;
+	background: var(--vscode-editor-background);
+}
+body.sidebar td {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	padding: 4px 0;
+	border-bottom: none;
+}
+body.sidebar td::before {
+	content: attr(data-label);
+	font-size: 11px;
+	font-weight: 600;
+	color: var(--vscode-descriptionForeground);
+}
+body.sidebar td.action-buttons {
+	flex-direction: row;
+	gap: 6px;
+}
+body.sidebar td.action-buttons::before {
+	display: none;
+}
+body.sidebar td.action-buttons button {
+	flex: 1;
+	padding: 6px 8px;
+	font-size: 12px;
+}
+body.sidebar .actions {
+	margin-top: 6px;
+}
+body.sidebar .actions button {
+	flex: 1;
+	margin-right: 0;
+	padding: 6px 8px;
+	font-size: 12px;
+}
+body.sidebar .retry-config,
+body.sidebar .advanced-settings,
+body.sidebar .form-container {
+	padding: 10px;
+	margin: 10px 0;
+}
+body.sidebar .retry-config h3,
+body.sidebar .advanced-settings h3 {
+	font-size: 13px;
+}
+body.sidebar .advanced-settings button {
+	flex: 1;
+	font-size: 12px;
+}
+body.sidebar .input-with-dropdown .model-input {
+	font-size: 13px;
+}
+body.sidebar .table-container {
+	overflow-x: auto;
+}
+body.sidebar table {
+	font-size: 12px;
+}
+body.sidebar th,
+body.sidebar td {
+	padding: 6px 8px;
+}
+
 .error-message:empty {
 	display: none;
+}
+
+/* Connection test result styling */
+.test-result {
+	padding: 10px 12px;
+	margin-bottom: 12px;
+	border-radius: 8px;
+	border: 1px solid var(--vscode-inputValidation-warningBorder, var(--vscode-editorWidget-border));
+	background: rgba(255, 255, 255, 0.03);
+	font-size: 13px;
+	line-height: 1.4;
+}
+
+.test-result.ok {
+	border-color: var(--vscode-testing-iconPassed, #3fb950);
+	background: rgba(63, 185, 80, 0.1);
+	color: var(--vscode-testing-iconPassed, #3fb950);
+}
+
+.test-result.error {
+	border-color: var(--vscode-inputValidation-errorBorder);
+	background: var(--vscode-inputValidation-errorBackground);
+	color: var(--vscode-inputValidation-errorForeground);
 }
 
 /* Field description styling */

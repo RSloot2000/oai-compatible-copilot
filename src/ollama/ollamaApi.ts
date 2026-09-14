@@ -184,6 +184,13 @@ export class OllamaApi extends CommonApi<OllamaMessage, OllamaRequestBody> {
 		try {
 			while (true) {
 				if (token.isCancellationRequested) {
+					// Cancel the underlying stream so the TCP connection is closed
+					// and the server (e.g. llama.cpp) stops generating.
+					try {
+						await reader.cancel();
+					} catch {
+						// ignore — connection may already be closed
+					}
 					break;
 				}
 

@@ -96,6 +96,13 @@ export interface HFModelItem {
 	delay?: number;
 
 	/**
+	 * Model-specific connect timeout in milliseconds before a request is aborted
+	 * if no response headers are received. If not specified, falls back to global
+	 * `oaicopilot.connectTimeout` configuration.
+	 */
+	connectTimeout?: number;
+
+	/**
 	 * Enable Anthropic prompt caching breakpoints (only effective when `apiMode` is `"anthropic"`).
 	 *
 	 * When enabled, the provider will:

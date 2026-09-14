@@ -48,6 +48,9 @@ const cbMaxFileBytesInput = document.getElementById("cbMaxFileBytes");
 const cbSearchLimitInput = document.getElementById("cbSearchLimit");
 const cbIncludeInput = document.getElementById("cbInclude");
 const cbExcludeInput = document.getElementById("cbExclude");
+const testQdrantConnectionBtn = document.getElementById("testQdrantConnection");
+const testEmbeddingConnectionBtn = document.getElementById("testEmbeddingConnection");
+const codebaseTestResult = document.getElementById("codebaseTestResult");
 
 // Provider management elements
 const providerTableBody = document.getElementById("providerTableBody");
@@ -219,6 +222,36 @@ document.getElementById("refreshGlobalConfig").addEventListener("click", handleR
 document.getElementById("refreshProviders").addEventListener("click", handleRefresh);
 document.getElementById("refreshModels").addEventListener("click", handleRefresh);
 document.getElementById("refreshCodebaseIndex").addEventListener("click", handleRefresh);
+
+// Connection test buttons
+function showTestResult(ok, message) {
+	if (!codebaseTestResult) {
+		return;
+	}
+	codebaseTestResult.textContent = message;
+	codebaseTestResult.classList.remove("ok", "error");
+	codebaseTestResult.classList.add(ok ? "ok" : "error");
+	codebaseTestResult.style.display = "block";
+}
+
+testQdrantConnectionBtn.addEventListener("click", () => {
+	showTestResult(false, "Testing Qdrant connection…");
+	vscode.postMessage({
+		type: "testQdrant",
+		qdrantUrl: cbQdrantUrlInput.value,
+		collection: cbCollectionInput.value,
+	});
+});
+
+testEmbeddingConnectionBtn.addEventListener("click", () => {
+	showTestResult(false, "Testing embedding model…");
+	vscode.postMessage({
+		type: "testEmbedding",
+		ollamaUrl: cbOllamaUrlInput.value,
+		model: cbEmbeddingModelInput.value,
+		dimensions: parseInt(cbEmbeddingDimensionsInput.value) || 0,
+	});
+});
 
 // Add Provider button event listener
 document.getElementById("addProvider").addEventListener("click", () => {
@@ -447,6 +480,12 @@ window.addEventListener("message", (event) => {
 			cbCollectionDropdownContent.innerHTML = `<div class="dropdown-option error">Failed to fetch collections. Check the Developer Console for details.</div>`;
 			console.error("[oaicopilot] Failed to fetch collections:", message.error);
 			break;
+		case "qdrantTestResult":
+			showTestResult(message.ok, message.message);
+			break;
+		case "embeddingTestResult":
+			showTestResult(message.ok, message.message);
+			break;
 		case "modelsFetchError":
 			// Handle error from fetchModels
 			dropdownHeader.textContent = "Error fetching models";
@@ -492,10 +531,10 @@ function renderProviders() {
 
 			return `
 			<tr data-provider="${provider}">
-				<td>${provider}</td>
-				<td><input type="text" class="provider-input" data-field="baseUrl" value="${firstModel.baseUrl || ""}" placeholder="Base URL" /></td>
-				<td><input type="password" class="provider-input" data-field="apiKey" value="${state.providerKeys[provider] || ""}" placeholder="API Key" /></td>
-				<td>
+				<td data-label="Provider">${provider}</td>
+				<td data-label="Base URL"><input type="text" class="provider-input" data-field="baseUrl" value="${firstModel.baseUrl || ""}" placeholder="Base URL" /></td>
+				<td data-label="API Key"><input type="password" class="provider-input" data-field="apiKey" value="${state.providerKeys[provider] || ""}" placeholder="API Key" /></td>
+				<td data-label="API Mode">
 					<select class="provider-input" data-field="apiMode">
 						<option value="openai" ${firstModel.apiMode === "openai" ? "selected" : ""}>OpenAI</option>
 						<option value="openai-responses" ${firstModel.apiMode === "openai-responses" ? "selected" : ""}>OpenAI Responses</option>
@@ -504,8 +543,8 @@ function renderProviders() {
 						<option value="gemini" ${firstModel.apiMode === "gemini" ? "selected" : ""}>Gemini</option>
 					</select>
 				</td>
-				<td><textarea class="provider-input" data-field="headers" rows="2" placeholder='{"X-API-Version": "v1"}' style="width: 100%; font-family: monospace; font-size: 12px;">${headersJson}</textarea></td>
-				<td class="action-buttons">
+				<td data-label="Custom Headers (JSON)"><textarea class="provider-input" data-field="headers" rows="2" placeholder='{"X-API-Version": "v1"}' style="width: 100%; font-family: monospace; font-size: 12px;">${headersJson}</textarea></td>
+				<td data-label="Actions" class="action-buttons">
 					<button class="update-provider-btn" data-provider="${provider}">Save</button>
 					<button class="delete-provider-btn danger" data-provider="${provider}">Delete</button>
 				</td>
@@ -599,17 +638,17 @@ function renderModels() {
 		.map((model) => {
 			return `
 			<tr data-model-id="${model.id}${model.configId ? "::" + model.configId : ""}">
-				<td>${model.id}</td>
-				<td>${model.owned_by}</td>
-				<td>${model.displayName || ""}</td>
-				<td>${model.configId || ""}</td>
-				<td>${model.context_length || ""}</td>
-				<td>${model.max_tokens || model.max_completion_tokens || ""}</td>
-				<td>${model.vision ? "True" : ""}</td>
-				<td>${model.temperature !== undefined && model.temperature !== null ? model.temperature : ""}</td>
-				<td>${model.top_p !== undefined && model.top_p !== null ? model.top_p : ""}</td>
-				<td>${model.delay || ""}</td>
-				<td class="action-buttons">
+				<td data-label="Model ID">${model.id}</td>
+				<td data-label="Provider">${model.owned_by}</td>
+				<td data-label="Display Name">${model.displayName || ""}</td>
+				<td data-label="Config ID">${model.configId || ""}</td>
+				<td data-label="Context Length">${model.context_length || ""}</td>
+				<td data-label="Max Tokens">${model.max_tokens || model.max_completion_tokens || ""}</td>
+				<td data-label="Vision">${model.vision ? "True" : ""}</td>
+				<td data-label="Temperature">${model.temperature !== undefined && model.temperature !== null ? model.temperature : ""}</td>
+				<td data-label="TopP">${model.top_p !== undefined && model.top_p !== null ? model.top_p : ""}</td>
+				<td data-label="Delay (ms)">${model.delay || ""}</td>
+				<td data-label="Actions" class="action-buttons">
 					<button class="update-model-btn" data-model-id="${model.id}${model.configId ? "::" + model.configId : ""}">Edit</button>
 					<button class="delete-model-btn danger" data-model-id="${model.id}${model.configId ? "::" + model.configId : ""}">Delete</button>
 				</td>

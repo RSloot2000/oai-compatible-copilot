@@ -108,9 +108,12 @@
 			<div class="section-header">
 				<h2>Codebase Index</h2>
 				<div class="section-actions">
+					<button id="testQdrantConnection" class="secondary">Test Qdrant</button>
+					<button id="testEmbeddingConnection" class="secondary">Test Embedding Model</button>
 					<button id="refreshCodebaseIndex" class="secondary">Refresh</button>
 				</div>
 			</div>
+			<div id="codebaseTestResult" class="test-result" style="display: none"></div>
 			<div class="row">
 				<div class="field">
 					<label for="cbQdrantUrl">Qdrant URL</label>

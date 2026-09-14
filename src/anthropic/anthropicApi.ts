@@ -426,6 +426,11 @@ export class AnthropicApi extends CommonApi<AnthropicMessage, AnthropicRequestBo
 		try {
 			while (true) {
 				if (token.isCancellationRequested) {
+					try {
+						await reader.cancel();
+					} catch {
+						// ignore — connection may already be closed
+					}
 					break;
 				}
 

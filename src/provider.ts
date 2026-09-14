@@ -13,7 +13,7 @@ import type { HFModelItem, HFApiMode } from "./types";
 
 import type { OllamaRequestBody } from "./ollama/ollamaTypes";
 
-import { parseModelId, createRetryConfig, executeWithRetry, normalizeUserModels } from "./utils";
+import { parseModelId, createRetryConfig, executeWithRetry, normalizeUserModels, pruneOldToolResults } from "./utils";
 
 import { prepareLanguageModelChatInformation } from "./provideModel";
 import { countMessageTokens } from "./provideToken";
@@ -29,7 +29,7 @@ import { CommonApi } from "./commonApi";
 import { logger } from "./logger";
 
 /** Default connect timeout (ms) before a request is aborted if no response headers arrive. */
-const DEFAULT_CONNECT_TIMEOUT_MS = 30000;
+const DEFAULT_CONNECT_TIMEOUT_MS = 60000;
 
 /**
  * Combine multiple abort signals into one. Uses `AbortSignal.any` when available
@@ -84,6 +84,44 @@ async function fetchWithConnectTimeout(
 		}
 		throw e;
 	}
+}
+
+/**
+ * Read pinned files from configuration and return them as a single system
+ * message. Returns undefined when no pinned files are configured or none
+ * could be read.
+ */
+async function buildPinnedFilesMessage(): Promise<LanguageModelChatRequestMessage | undefined> {
+	const config = vscode.workspace.getConfiguration();
+	const pinnedPaths: string[] = config.get<string[]>("oaicopilot.pinnedFiles", []);
+	if (pinnedPaths.length === 0) {
+		return undefined;
+	}
+
+	const parts: string[] = [];
+	for (const rawPath of pinnedPaths) {
+		try {
+			const uri = vscode.Uri.file(rawPath);
+			const doc = await vscode.workspace.openTextDocument(uri);
+			const fileName = uri.path.split(/[\\/]/).pop() ?? rawPath;
+			parts.push(`<pinned_file path="${rawPath}">\n${doc.getText()}\n</pinned_file>`);
+		} catch (e) {
+			logger.warn("pinnedFiles.readFailed", { path: rawPath, error: e instanceof Error ? e.message : String(e) });
+		}
+	}
+
+	if (parts.length === 0) {
+		return undefined;
+	}
+
+	const content =
+		"The following files are pinned to the context and must always be respected. " +
+		"They are re-injected on every request and are immune to conversation compaction.\n\n" +
+		parts.join("\n\n");
+
+	// mapRole treats any role that is not User/Assistant as "system"
+	const SYSTEM = 0 as unknown as vscode.LanguageModelChatMessageRole;
+	return { role: SYSTEM, content: [new vscode.LanguageModelTextPart(content)], name: undefined };
 }
 
 /** Parameters for a lightweight connection/health check. */
@@ -321,8 +359,21 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 				includeReasoningInRequest: um?.include_reasoning_in_request ?? false,
 			};
 
+			// Prune old tool results to reduce prompt size
+			const pruneKeepLast = config.get<number>("oaicopilot.pruneToolResults", 8);
+			let effectiveMessages = pruneKeepLast > 0
+				? pruneOldToolResults(messages, pruneKeepLast)
+				: messages;
+
+			// Inject pinned files as a system message (immune to compaction)
+			const pinnedMsg = await buildPinnedFilesMessage();
+			if (pinnedMsg) {
+				effectiveMessages = [pinnedMsg, ...effectiveMessages];
+				logger.info("pinnedFiles.injected", { count: config.get<string[]>("oaicopilot.pinnedFiles", []).length });
+			}
+
 			// Update Token Usage
-			updateContextStatusBar(messages, options.tools, model, this.statusBarItem, modelConfig);
+			updateContextStatusBar(effectiveMessages, options.tools, model, this.statusBarItem, modelConfig);
 
 			// Apply delay between consecutive requests
 			const modelDelay = um?.delay;
@@ -369,11 +420,18 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 			const retryConfig = createRetryConfig();
 
 			// Connect timeout: abort a request if no response headers arrive in time.
-			const configuredTimeout = config.get<number>("oaicopilot.connectTimeout");
+			// Precedence: global override > per-model > global > default.
+			const overrideTimeout = config.get<number>("oaicopilot.connectTimeoutOverride");
+			const globalTimeout = config.get<number>("oaicopilot.connectTimeout");
+			const modelTimeout = um?.connectTimeout;
 			const connectTimeoutMs =
-				typeof configuredTimeout === "number" && configuredTimeout > 0
-					? configuredTimeout
-					: DEFAULT_CONNECT_TIMEOUT_MS;
+				typeof overrideTimeout === "number" && overrideTimeout > 0
+					? overrideTimeout
+					: typeof modelTimeout === "number" && modelTimeout > 0
+						? modelTimeout
+						: typeof globalTimeout === "number" && globalTimeout > 0
+							? globalTimeout
+							: DEFAULT_CONNECT_TIMEOUT_MS;
 
 			// prepare headers with custom headers if specified
 			const requestHeaders = CommonApi.prepareHeaders(modelApiKey, apiMode, um?.headers);
@@ -386,7 +444,7 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 			if (apiMode === "ollama") {
 				// Ollama native API mode
 				const ollamaApi = new OllamaApi(model.id);
-				const ollamaMessages = ollamaApi.convertMessages(messages, modelConfig);
+				const ollamaMessages = ollamaApi.convertMessages(effectiveMessages, modelConfig);
 
 				let ollamaRequestBody: OllamaRequestBody = {
 					model: parsedModelId.baseId,
@@ -431,7 +489,7 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 			} else if (apiMode === "anthropic") {
 				// Anthropic API mode
 				const anthropicApi = new AnthropicApi(model.id, um?.cache_control !== false);
-				const anthropicMessages = anthropicApi.convertMessages(messages, modelConfig);
+				const anthropicMessages = anthropicApi.convertMessages(effectiveMessages, modelConfig);
 
 				// requestBody
 				let requestBody: AnthropicRequestBody = {
@@ -483,12 +541,12 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 				const statefulModelId = parsedModelId.baseId;
 
 				// Convert full history once (also extracts system `instructions`).
-				const fullInput = openaiResponsesApi.convertMessages(messages, modelConfig);
+				const fullInput = openaiResponsesApi.convertMessages(effectiveMessages, modelConfig);
 
-				const marker = findLastOpenAIResponsesStatefulMarker(statefulModelId, messages);
+				const marker = findLastOpenAIResponsesStatefulMarker(statefulModelId, effectiveMessages);
 				let deltaInput: unknown[] | null = null;
-				if (marker && marker.index >= 0 && marker.index < messages.length - 1) {
-					const deltaMessages = messages.slice(marker.index + 1);
+				if (marker && marker.index >= 0 && marker.index < effectiveMessages.length - 1) {
+					const deltaMessages = effectiveMessages.slice(marker.index + 1);
 					const converted = openaiResponsesApi.convertMessages(deltaMessages, modelConfig);
 					if (converted.length > 0) {
 						deltaInput = converted;
@@ -594,7 +652,7 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 			} else if (apiMode === "gemini") {
 				// Gemini native API mode
 				const geminiApi = new GeminiApi(model.id, this._geminiToolCallMetaByCallId);
-				const geminiMessages = geminiApi.convertMessages(messages, modelConfig);
+				const geminiMessages = geminiApi.convertMessages(effectiveMessages, modelConfig);
 
 				const systemParts: string[] = [];
 				const contents: GeminiGenerateContentRequest["contents"] = [];
@@ -660,7 +718,7 @@ export class HuggingFaceChatModelProvider implements LanguageModelChatProvider {
 			} else {
 				// OpenAI compatible API mode (default)
 				const openaiApi = new OpenaiApi(model.id);
-				const openaiMessages = openaiApi.convertMessages(messages, modelConfig);
+				const openaiMessages = openaiApi.convertMessages(effectiveMessages, modelConfig);
 
 				// requestBody
 				let requestBody: Record<string, unknown> = {

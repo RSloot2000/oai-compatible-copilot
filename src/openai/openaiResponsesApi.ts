@@ -311,6 +311,11 @@ export class OpenaiResponsesApi extends CommonApi<ResponsesInputItem, Record<str
 		try {
 			while (true) {
 				if (token.isCancellationRequested) {
+					try {
+						await reader.cancel();
+					} catch {
+						// ignore — connection may already be closed
+					}
 					break;
 				}
 

@@ -784,6 +784,11 @@ export class GeminiApi extends CommonApi<GeminiChatMessage, GeminiGenerateConten
 		try {
 			while (true) {
 				if (token.isCancellationRequested) {
+					try {
+						await reader.cancel();
+					} catch {
+						// ignore — connection may already be closed
+					}
 					break;
 				}
 

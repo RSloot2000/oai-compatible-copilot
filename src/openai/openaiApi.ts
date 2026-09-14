@@ -288,6 +288,11 @@ export class OpenaiApi extends CommonApi<OpenAIChatMessage, Record<string, unkno
 		try {
 			while (true) {
 				if (token.isCancellationRequested) {
+					try {
+						await reader.cancel();
+					} catch {
+						// ignore — connection may already be closed
+					}
 					break;
 				}
 

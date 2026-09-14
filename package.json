@@ -26,7 +26,7 @@
 		"url": "https://github.com/RSloot2000/oai-compatible-copilot"
 	},
 	"homepage": "https://github.com/RSloot2000/oai-compatible-copilot#readme",
-	"version": "0.5.2",
+	"version": "0.5.8",
 	"engines": {
 		"vscode": "^1.120.0"
 	},
@@ -49,6 +49,26 @@
 		"chatProvider"
 	],
 	"contributes": {
+		"viewsContainers": {
+			"activitybar": [
+				{
+					"id": "oaicopilot-sidebar",
+					"title": "OAICopilot",
+					"icon": "$(settings-gear)"
+				}
+			]
+		},
+		"views": {
+			"oaicopilot-sidebar": [
+				{
+					"type": "webview",
+					"id": "oaicopilot.configSidebar",
+					"name": "Configuration",
+					"icon": "$(settings-gear)",
+					"context": "oaicopilot-sidebar"
+				}
+			]
+		},
 		"languageModelChatProviders": [
 			{
 				"vendor": "oaicopilot",
@@ -177,6 +197,26 @@
 			{
 				"command": "oaicopilot.codebaseSearch",
 				"title": "Codebase Index: Search",
+				"category": "OAICopilot"
+			},
+			{
+				"command": "oaicopilot.codebaseDeleteCollection",
+				"title": "Codebase Index: Delete Collection",
+				"category": "OAICopilot"
+			},
+			{
+				"command": "oaicopilot.pinFile",
+				"title": "Pin File to Context",
+				"category": "OAICopilot"
+			},
+			{
+				"command": "oaicopilot.unpinFile",
+				"title": "Unpin File from Context",
+				"category": "OAICopilot"
+			},
+			{
+				"command": "oaicopilot.listPinnedFiles",
+				"title": "List Pinned Files",
 				"category": "OAICopilot"
 			}
 		],
@@ -452,8 +492,12 @@
 								"default": 0,
 								"minimum": 0,
 								"description": "Model-specific delay in milliseconds between consecutive requests. If not specified, falls back to global oaicopilot.delay configuration."
-							},
-							"cache_control": {
+							},								"connectTimeout": {
+									"type": "number",
+									"default": 60000,
+									"minimum": 1000,
+									"description": "Model-specific connect timeout in milliseconds before a request is aborted if no response headers are received. If not specified, falls back to global oaicopilot.connectTimeout configuration."
+								},							"cache_control": {
 								"type": "boolean",
 								"default": true,
 								"description": "Enable Anthropic prompt-caching breakpoints (apiMode='anthropic' only). When true, attaches cache_control={type:'ephemeral'} to the system prompt and the last tool definition, and forwards any in-message cache_control markers emitted by Copilot. Set to false for upstream providers that reject the cache_control field."
@@ -524,11 +568,31 @@
 					"minimum": 0,
 					"description": "Fixed delay in milliseconds between consecutive requests. Default is 0 (no delay)."
 				},
+				"oaicopilot.pruneToolResults": {
+					"type": "number",
+					"default": 8,
+					"minimum": 0,
+					"description": "Number of most-recent tool results to keep intact in the prompt. Older tool results are replaced with a short placeholder to reduce prompt size. Set to 0 to disable pruning."
+				},
+				"oaicopilot.pinnedFiles": {
+					"type": "array",
+					"default": [],
+					"items": {
+						"type": "string"
+					},
+					"description": "Absolute file paths that are always injected into the prompt as a system message, immune to conversation compaction. Use the 'Pin File to Context' command to add the active file."
+				},
 				"oaicopilot.connectTimeout": {
 					"type": "number",
-					"default": 30000,
+					"default": 60000,
 					"minimum": 1000,
-					"description": "Connect timeout in milliseconds before a request is aborted if no response headers are received. Default is 30000 (30 seconds)."
+					"description": "Connect timeout in milliseconds before a request is aborted if no response headers are received. Default is 60000 (60 seconds)."
+				},
+				"oaicopilot.connectTimeoutOverride": {
+					"type": "number",
+					"default": 0,
+					"minimum": 0,
+					"description": "Global connect timeout override in milliseconds. When set to a value greater than 0, this overrides BOTH the per-model connectTimeout and the global oaicopilot.connectTimeout for every request. Set to 0 to disable the override and fall back to the normal precedence (per-model, then global)."
 				},
 				"oaicopilot.commitLanguage": {
 					"type": "string",

@@ -18,8 +18,7 @@ interface CodebaseConfig {
 }
 
 interface IndexedFile {
-	mtime: number;
-	size: number;
+	hash: string;
 	chunks: number;
 }
 
@@ -56,8 +55,14 @@ export interface CodebaseStatus {
 	indexedFiles?: number;
 	indexedChunks?: number;
 	pendingChanges?: number;
+	pendingChangeDetails?: string[];
 	lastUpdated?: string;
 	message?: string;
+}
+
+export interface BuildProgress {
+	current: number;
+	total: number;
 }
 
 export interface BuildStatus {
@@ -65,6 +70,7 @@ export interface BuildStatus {
 	startedAt?: string;
 	lastResult?: IndexResult;
 	error?: string;
+	progress?: BuildProgress;
 }
 
 export interface SearchResult {
@@ -102,6 +108,12 @@ export class CodebaseIndexService implements vscode.Disposable {
 			vscode.workspace.onDidChangeConfiguration((event) => {
 				if (event.affectsConfiguration("oaicopilot.codebaseIndex")) {
 					this.configureWatchers();
+					// Recompute and emit status immediately so the status bar /
+					// QuickPick reflect the new collection, URLs, or other settings,
+					// even when autoUpdate is disabled or there are no pending file
+					// changes. scheduleAutoUpdate() alone returns early in those cases
+					// and would leave the cached status stale.
+					void this.refreshStatus();
 					this.scheduleAutoUpdate();
 				}
 			}),
@@ -136,6 +148,23 @@ export class CodebaseIndexService implements vscode.Disposable {
 
 	getCachedStatus(): CodebaseStatus | undefined {
 		return this.cachedStatus;
+	}
+
+	/**
+	 * Recomputes the status and emits it, so the status bar / QuickPick reflect
+	 * the latest configuration (e.g. a new collection or URL) without waiting
+	 * for a build or a file change.
+	 */
+	private async refreshStatus(): Promise<void> {
+		const token = new vscode.CancellationTokenSource().token;
+		try {
+			const current = await this.computeStatus(token);
+			this.cachedStatus = current;
+			this.emitStatus();
+		} catch (error) {
+			// Never let a status refresh crash the config-change handler.
+			console.error("[oaicopilot] refreshStatus failed", error);
+		}
 	}
 
 	private emitStatus(): void {
@@ -176,7 +205,15 @@ export class CodebaseIndexService implements vscode.Disposable {
 		}
 
 		const manifest = this.getManifest(workspaceId);
-		const pendingChanges = manifest ? await this.countManifestChanges(config, manifest, token) : 0;
+		let pendingChanges = 0;
+		let pendingChangeDetails: string[] | undefined;
+		if (manifest) {
+			const result = await this.countManifestChanges(config, manifest, token);
+			pendingChanges = result.count;
+			if (result.details.length > 0) {
+				pendingChangeDetails = result.details;
+			}
+		}
 		let indexedChunks = 0;
 		let collectionExists = false;
 		try {
@@ -209,6 +246,7 @@ export class CodebaseIndexService implements vscode.Disposable {
 			indexedFiles,
 			indexedChunks,
 			pendingChanges,
+			pendingChangeDetails,
 			lastUpdated: manifest?.updatedAt,
 		};
 	}
@@ -219,6 +257,20 @@ export class CodebaseIndexService implements vscode.Disposable {
 
 	async update(_token: vscode.CancellationToken): Promise<BuildStatus> {
 		return this.startBuild(false);
+	}
+
+	/**
+	 * Deletes the entire Qdrant collection for the current workspace and clears
+	 * the local manifest. The collection is recreated automatically on the next
+	 * index build (via ensureCollection).
+	 */
+	async deleteCollection(token: vscode.CancellationToken): Promise<void> {
+		const workspaceId = this.requireWorkspaceId();
+		const config = this.getConfig();
+		await this.deleteCollectionByName(config, token);
+		this.context.workspaceState.update(`${MANIFEST_PREFIX}${workspaceId}`, undefined);
+		this.cachedStatus = undefined;
+		void this.status(new vscode.CancellationTokenSource().token);
 	}
 
 	getBuildStatus(): BuildStatus {
@@ -235,6 +287,7 @@ export class CodebaseIndexService implements vscode.Disposable {
 			startedAt: new Date().toISOString(),
 			lastResult: this.buildState.lastResult,
 			error: undefined,
+			progress: { current: 0, total: 0 },
 		};
 		void this.runIndex(full, source.token)
 			.then((result) => {
@@ -243,14 +296,17 @@ export class CodebaseIndexService implements vscode.Disposable {
 					startedAt: this.buildState.startedAt,
 					lastResult: result,
 					error: undefined,
+					progress: undefined,
 				};
 			})
 			.catch((error) => {
+				console.error(`[codebase-index] BUILD FAILED: ${this.errorMessage(error)}`);
 				this.buildState = {
 					running: false,
 					startedAt: this.buildState.startedAt,
 					lastResult: this.buildState.lastResult,
 					error: this.errorMessage(error),
+					progress: undefined,
 				};
 			})
 			.finally(() => {
@@ -321,23 +377,26 @@ export class CodebaseIndexService implements vscode.Disposable {
 		await this.ensureCollection(config, token);
 
 		const previous = this.getManifest(workspaceId);
-		const uris = await vscode.workspace.findFiles(config.include, config.exclude);
+		// Empty include means "all files"; empty exclude means "no exclusion".
+		const uris = await vscode.workspace.findFiles(config.include || "**/*", config.exclude || undefined);
 		const currentFiles: Record<string, IndexedFile> = {};
-		const changed: Array<{ uri: vscode.Uri; workspacePath: string; stat: vscode.FileStat }> = [];
+		const changed: Array<{ uri: vscode.Uri; workspacePath: string }> = [];
 		let skippedFiles = 0;
 
 		for (const uri of uris) {
 			this.throwIfCancelled(token);
 			const stat = await vscode.workspace.fs.stat(uri);
-			const workspacePath = vscode.workspace.asRelativePath(uri, false).replace(/\\/g, "/");
+			const workspacePath = this.relativeWorkspacePath(uri);
 			if (stat.type !== vscode.FileType.File || stat.size > config.maxFileBytes) {
 				skippedFiles++;
 				continue;
 			}
+			const bytes = await vscode.workspace.fs.readFile(uri);
+			const hash = crypto.createHash("sha256").update(bytes).digest("hex");
 			const old = previous?.files[workspacePath];
-			currentFiles[workspacePath] = { mtime: stat.mtime, size: stat.size, chunks: old?.chunks ?? 0 };
-			if (full || !old || old.mtime !== stat.mtime || old.size !== stat.size || this.changedUris.has(uri.toString())) {
-				changed.push({ uri, workspacePath, stat });
+			currentFiles[workspacePath] = { hash, chunks: old?.chunks ?? 0 };
+			if (full || !old || old.hash !== hash || this.changedUris.has(uri.toString())) {
+				changed.push({ uri, workspacePath });
 			}
 		}
 
@@ -345,22 +404,52 @@ export class CodebaseIndexService implements vscode.Disposable {
 			? Object.keys(previous.files).filter((workspacePath) => currentFiles[workspacePath] === undefined)
 			: [];
 
+		let indexedChunks = 0;
+		let processedFiles = 0;
+		this.buildState.progress = { current: 0, total: changed.length };
+		this.emitBuild();
+
 		if (full) {
 			await this.deleteByFilter(config, this.workspaceFilter(workspaceId), token);
 		} else {
-			for (const workspacePath of [...removed, ...changed.map((file) => file.workspacePath)]) {
-				await this.deleteByFilter(config, this.fileFilter(workspaceId, workspacePath), token);
+			// Only delete files that were previously indexed (exist in Qdrant).
+			// New files have no existing points and don't need deletion.
+			const toDelete = new Set<string>();
+			for (const workspacePath of removed) {
+				toDelete.add(workspacePath);
+			}
+			for (const file of changed) {
+				if (previous?.files[file.workspacePath]) {
+					toDelete.add(file.workspacePath);
+				}
+			}
+			// Batch deletes in groups of 100 to avoid thousands of sequential Qdrant calls.
+			const paths = [...toDelete];
+			for (let i = 0; i < paths.length; i += 100) {
+				this.throwIfCancelled(token);
+				const batch = paths.slice(i, i + 100);
+				const filter: Record<string, unknown> = {
+					must: [
+						{ key: "workspace_id", match: { value: workspaceId } },
+						{ should: batch.map((p) => ({ key: "path", match: { value: p } })) },
+					],
+				};
+				await this.deleteByFilter(config, filter, token);
 			}
 		}
-
-		let indexedChunks = 0;
 		for (const file of changed) {
 			this.throwIfCancelled(token);
+			processedFiles++;
+			this.buildState.progress = { current: processedFiles, total: changed.length };
+			this.emitBuild();
 			const bytes = await vscode.workspace.fs.readFile(file.uri);
 			const content = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
 			if (content.includes("\u0000")) {
 				skippedFiles++;
-				delete currentFiles[file.workspacePath];
+				// Keep the file in currentFiles (with chunks: 0) so it appears
+				// in the manifest. Removing it would cause countManifestChanges
+				// to see it as "not indexed" and report a permanent pending
+				// change, making the index appear stale forever.
 				continue;
 			}
 
@@ -411,29 +500,39 @@ export class CodebaseIndexService implements vscode.Disposable {
 		config: CodebaseConfig,
 		manifest: IndexManifest,
 		token: vscode.CancellationToken
-	): Promise<number> {
-		const uris = await vscode.workspace.findFiles(config.include, config.exclude);
+	): Promise<{ count: number; details: string[] }> {
+		const uris = await vscode.workspace.findFiles(config.include || "**/*", config.exclude || undefined);
 		const currentPaths = new Set<string>();
 		let changes = 0;
+		const details: string[] = [];
 		for (const uri of uris) {
 			this.throwIfCancelled(token);
 			const stat = await vscode.workspace.fs.stat(uri);
 			if (stat.type !== vscode.FileType.File || stat.size > config.maxFileBytes) {
 				continue;
 			}
-			const workspacePath = vscode.workspace.asRelativePath(uri, false).replace(/\\/g, "/");
+			const workspacePath = this.relativeWorkspacePath(uri);
 			currentPaths.add(workspacePath);
 			const indexed = manifest.files[workspacePath];
-			if (!indexed || indexed.mtime !== stat.mtime || indexed.size !== stat.size) {
+			if (!indexed) {
 				changes++;
+				details.push(`${workspacePath} (not in manifest)`);
+			} else {
+				const bytes = await vscode.workspace.fs.readFile(uri);
+				const hash = crypto.createHash("sha256").update(bytes).digest("hex");
+				if (hash !== indexed.hash) {
+					changes++;
+					details.push(`${workspacePath} (content changed)`);
+				}
 			}
 		}
 		for (const workspacePath of Object.keys(manifest.files)) {
 			if (!currentPaths.has(workspacePath)) {
 				changes++;
+				details.push(`${workspacePath} (deleted from disk)`);
 			}
 		}
-		return changes;
+		return { count: changes, details };
 	}
 
 	private chunkFile(uri: vscode.Uri, workspacePath: string, content: string, config: CodebaseConfig): Chunk[] {
@@ -563,6 +662,24 @@ export class CodebaseIndexService implements vscode.Disposable {
 		);
 	}
 
+	private async deleteCollectionByName(config: CodebaseConfig, token: vscode.CancellationToken): Promise<void> {
+		const controller = this.abortController(token);
+		try {
+			const response = await fetch(
+				`${config.qdrantUrl.replace(/\/+$/, "")}/collections/${encodeURIComponent(config.collection)}`,
+				{ method: "DELETE", signal: controller.signal }
+			);
+			if (response.status === 404) {
+				return;
+			}
+			if (!response.ok) {
+				throw new Error(`Qdrant request failed: ${response.status} ${await response.text()}`);
+			}
+		} finally {
+			controller.dispose();
+		}
+	}
+
 	private async qdrantRequest<T = unknown>(
 		config: CodebaseConfig,
 		endpoint: string,
@@ -629,6 +746,29 @@ export class CodebaseIndexService implements vscode.Disposable {
 		return workspaceId;
 	}
 
+	/**
+	 * Returns a workspace-relative path that is unique across a multi-root
+	 * workspace. `asRelativePath(uri, false)` is relative to the *folder* that
+	 * contains the file, so files with the same relative path in different
+	 * folders (e.g. `.gitignore` in two folders) would collide in the manifest.
+	 * Prefixing with the containing folder's name keeps every key unique.
+	 */
+	private relativeWorkspacePath(uri: vscode.Uri): string {
+		const folders = vscode.workspace.workspaceFolders;
+		if (!folders?.length) {
+			return vscode.workspace.asRelativePath(uri, false).replace(/\\/g, "/");
+		}
+		for (const folder of folders) {
+			const folderPath = folder.uri.path.replace(/\\/g, "/");
+			const uriPath = uri.path.replace(/\\/g, "/");
+			if (uriPath === folderPath || uriPath.startsWith(`${folderPath}/`)) {
+				const rel = uriPath.slice(folderPath.length).replace(/^\//, "");
+				return rel ? `${folder.name}/${rel}` : folder.name;
+			}
+		}
+		return vscode.workspace.asRelativePath(uri, false).replace(/\\/g, "/");
+	}
+
 	private uuidFromText(value: string): string {
 		const hash = crypto.createHash("sha256").update(value).digest("hex").slice(0, 32);
 		return `${hash.slice(0, 8)}-${hash.slice(8, 12)}-${hash.slice(12, 16)}-${hash.slice(16, 20)}-${hash.slice(20)}`;
@@ -662,7 +802,7 @@ export class CodebaseIndexService implements vscode.Disposable {
 		const config = this.getConfig();
 		for (const folder of folders) {
 			const watcher = vscode.workspace.createFileSystemWatcher(
-				new vscode.RelativePattern(folder, config.include),
+				new vscode.RelativePattern(folder, config.include || "**/*"),
 				false,
 				false,
 				false

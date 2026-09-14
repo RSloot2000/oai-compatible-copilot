@@ -23,6 +23,7 @@ let tokenBackground: vscode.ThemeColor | undefined;
 let tokenInfo: TokenInfo | undefined;
 let codebaseStatus: CodebaseStatus | undefined;
 let buildState: BuildStatus | undefined;
+let activePick: vscode.QuickPick<vscode.QuickPickItem> | undefined;
 
 /**
  * Creates the status bar item and wires up the codebase index status + dropdown menu.
@@ -43,10 +44,16 @@ export function initStatusBar(context: vscode.ExtensionContext, service: Codebas
 		service.onStatusChanged((status) => {
 			codebaseStatus = status;
 			render();
+			if (activePick) {
+				activePick.items = buildItems();
+			}
 		}),
 		service.onBuildChanged((build) => {
 			buildState = build;
 			render();
+			if (activePick) {
+				activePick.items = buildItems();
+			}
 		}),
 		vscode.commands.registerCommand("oaicopilot.showMenu", () => showMenu())
 	);
@@ -109,6 +116,14 @@ function codebaseTooltip(): string {
 	}
 	if (codebaseStatus.pendingChanges !== undefined && codebaseStatus.pendingChanges > 0) {
 		lines.push(`  Pending changes: ${codebaseStatus.pendingChanges}`);
+		if (codebaseStatus.pendingChangeDetails) {
+			for (const detail of codebaseStatus.pendingChangeDetails.slice(0, 10)) {
+				lines.push(`    - ${detail}`);
+			}
+			if (codebaseStatus.pendingChangeDetails.length > 10) {
+				lines.push(`    … and ${codebaseStatus.pendingChangeDetails.length - 10} more`);
+			}
+		}
 	}
 	if (codebaseStatus.lastUpdated) {
 		lines.push(`  Last updated: ${codebaseStatus.lastUpdated}`);
@@ -123,7 +138,12 @@ function codebaseTooltip(): string {
  * Opens the status QuickPick. It stays open until the user presses Escape
  * or clicks elsewhere. Shows token usage, codebase index status, and actions.
  */
-function showMenu(): void {
+/**
+ * Builds the list of QuickPick items from the current token + codebase state.
+ * Called once when the menu opens and again on every live status/build change
+ * so an open menu reflects indexing progress in real time.
+ */
+function buildItems(): vscode.QuickPickItem[] {
 	const items: vscode.QuickPickItem[] = [];
 
 	// --- Token Usage / Context ---
@@ -153,22 +173,34 @@ function showMenu(): void {
 	items.push({ label: "Codebase Index", kind: vscode.QuickPickItemKind.Separator });
 
 	if (buildState?.running) {
-		items.push({
-			label: "$(loading~spin) Indexing in progress…",
-			alwaysShow: true,
-		});
+		const progress = buildState.progress;
+		if (progress && progress.total > 0) {
+			const pct = Math.round((progress.current / progress.total) * 100);
+			items.push({
+				label: "$(loading~spin) Indexing…",
+				description: `${progress.current}/${progress.total} files (${pct}%)`,
+				alwaysShow: true,
+			});
+		} else {
+			items.push({
+				label: "$(loading~spin) Indexing in progress…",
+				alwaysShow: true,
+			});
+		}
 	} else if (!codebaseStatus) {
 		items.push({ label: "$(database) Loading…", alwaysShow: true });
 	} else if (!codebaseStatus.configured) {
 		items.push({
 			label: "$(circle-slash) Not configured",
-			description: "Set Qdrant & Ollama URLs in settings",
+			description: codebaseStatus.message ?? "Set Qdrant & Ollama URLs in settings",
 			alwaysShow: true,
 		});
 	} else if (codebaseStatus.stale) {
+		const details = codebaseStatus.pendingChangeDetails;
 		items.push({
 			label: "$(warning) Stale",
 			description: `${codebaseStatus.pendingChanges ?? 0} pending change(s)`,
+			detail: details ? details.slice(0, 5).join("\n") : undefined,
 			alwaysShow: true,
 		});
 	} else if (codebaseStatus.indexed) {
@@ -178,7 +210,11 @@ function showMenu(): void {
 			alwaysShow: true,
 		});
 	} else {
-		items.push({ label: "$(circle-slash) No index", alwaysShow: true });
+		items.push({
+			label: "$(circle-slash) No index",
+			description: codebaseStatus.message ?? "Build the index to get started",
+			alwaysShow: true,
+		});
 	}
 
 	if (codebaseStatus?.lastUpdated) {
@@ -218,6 +254,11 @@ function showMenu(): void {
 				description: "Semantic search in the index",
 			alwaysShow: true,
 			});
+			items.push({
+				label: "$(trash) Delete Collection",
+				description: `Delete the Qdrant collection "${codebaseStatus.collection}"`,
+			alwaysShow: true,
+			});
 		}
 	}
 
@@ -228,13 +269,24 @@ function showMenu(): void {
 		alwaysShow: true,
 	});
 
+	return items;
+}
+
+/**
+ * Opens the status QuickPick. It stays open until the user presses Escape
+ * or clicks elsewhere. Shows token usage, codebase index status, and actions.
+ * While open, the menu live-updates on every status/build change.
+ */
+function showMenu(): void {
 	const pick = vscode.window.createQuickPick();
-	pick.items = items;
+	pick.items = buildItems();
 	pick.title = "OAICopilot Status";
 	pick.canSelectMany = false;
 	pick.matchOnDescription = false;
 	pick.matchOnDetail = false;
 	pick.placeholder = "Select an action or press Escape to close";
+
+	activePick = pick;
 
 	pick.onDidAccept(async () => {
 		const item = pick.selectedItems[0];
@@ -252,12 +304,25 @@ function showMenu(): void {
 			await vscode.commands.executeCommand("oaicopilot.codebaseUpdate");
 		} else if (label.includes("Search Codebase")) {
 			await vscode.commands.executeCommand("oaicopilot.codebaseSearch");
+		} else if (label.includes("Delete Collection")) {
+			const collection = codebaseStatus?.collection ?? "the codebase collection";
+			const confirmed = await vscode.window.showWarningMessage(
+				`Delete the Qdrant collection "${collection}"? This removes all indexed vectors and cannot be undone.`,
+				{ modal: true },
+				"Delete"
+			);
+			if (confirmed === "Delete") {
+				await vscode.commands.executeCommand("oaicopilot.codebaseDeleteCollection");
+			}
 		} else if (label.includes("Open Configuration")) {
 			await vscode.commands.executeCommand("oaicopilot.openConfig");
 		}
 	});
 
-	pick.onDidHide(() => pick.dispose());
+	pick.onDidHide(() => {
+		activePick = undefined;
+		pick.dispose();
+	});
 	pick.show();
 }
 

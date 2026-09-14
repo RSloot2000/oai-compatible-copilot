@@ -1,5 +1,27 @@
 # Change Log
 
+## 0.5.8 (2026-09-14) - RSloot2000 fork
+
+- Feat(context): Add pinned files. Files listed in the new `oaicopilot.pinnedFiles` setting are re-injected into the prompt as a system message on every request, so they survive conversation compaction. Files are read fresh on each request, so edits are always picked up; unreadable files are logged and skipped.
+- Feat(commands): Add `Pin File to Context` (pins the active file), `Unpin File from Context` (quick pick of pinned files), and `List Pinned Files` (read-only overview with file sizes; select to open).
+
+## 0.5.7 (2026-09-10) - RSloot2000 fork
+
+- Feat(prompt): Add `oaicopilot.pruneToolResults` setting (default 8). Older tool results in the conversation are replaced with a short placeholder before the request is sent, keeping only the most recent N tool results intact. This significantly reduces prompt size in long coding sessions (e.g. 68K -> much smaller), which speeds up both normal requests and conversation compaction. Set to 0 to disable pruning.
+
+## 0.5.6 (2026-09-10) - RSloot2000 fork
+
+- Feat(config): Add a sidebar view in the activity bar (OAICopilot icon) that opens the same configuration UI as the editor tab. Both views share a single `ConfigController`, so settings, providers, models, and codebase index options stay in sync.
+- Fix(codebase): Binary files (containing null bytes) are no longer removed from the manifest. They are kept with `chunks: 0`, preventing a permanent `stale: true` state after a full index build.
+- Fix(codebase): A file is only flagged as changed when its disk mtime is **newer** than the manifest mtime. Previously any mtime difference (including a file being reverted to an older version by git) was counted as a pending change, causing false "stale" reports.
+- Fix(codebase): The manifest is now saved **before** Qdrant upserts begin, with the latest mtime/size values. If an upsert fails (e.g. Qdrant timeout), the manifest still reflects the current disk state, so the index is not falsely reported as stale. Chunk counts are updated in a second save after upserts complete.
+- Fix(config): Compact the configuration UI layout for the narrow sidebar view so fields remain readable.
+
+## 0.5.5 (2026-09-10) - RSloot2000 fork
+
+- Feat(codebase): Add Qdrant collection management. A new `Delete Collection` action in the status QuickPick (and the `oaicopilot.codebaseDeleteCollection` command) deletes the entire Qdrant collection and clears the local manifest. The collection is recreated automatically on the next index build.
+- Fix(retry): Connect timeouts (no response headers received) are no longer retried. A slow endpoint now fails fast instead of retrying three times. Raise `oaicopilot.connectTimeout` (e.g. 60000 or 120000) if your model needs more than the default 30 seconds to return response headers.
+
 ## 0.5.0 (2026-09-08) - RSloot2000 fork
 
 - Feat(codebase): Add local semantic workspace indexing backed by a configurable Ollama embedding endpoint and Qdrant collection.

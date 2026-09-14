@@ -3,11 +3,22 @@ import { HuggingFaceChatModelProvider } from "./provider";
 import type { HFModelItem } from "./types";
 import { initStatusBar } from "./statusBar";
 import { ConfigViewPanel } from "./views/configView";
+import { ConfigSidebarView } from "./views/configSidebarView";
 import { logger } from "./logger";
 import { normalizeUserModels } from "./utils";
 import { abortCommitGeneration, generateCommitMsg } from "./gitCommit/commitMessageGenerator";
 import { TokenizerManager } from "./tokenizer/tokenizerManager";
 import { registerCodebaseTools } from "./codebase/tools";
+
+function formatBytes(bytes: number): string {
+	if (bytes < 1024) {
+		return `${bytes} B`;
+	}
+	if (bytes < 1024 * 1024) {
+		return `${(bytes / 1024).toFixed(1)} KB`;
+	}
+	return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
 
 export function activate(context: vscode.ExtensionContext) {
 	// Initialize logger
@@ -109,6 +120,11 @@ export function activate(context: vscode.ExtensionContext) {
 		})
 	);
 
+	// Register the sidebar configuration view (activity bar icon).
+	context.subscriptions.push(
+		vscode.window.registerWebviewViewProvider(ConfigSidebarView.viewType, new ConfigSidebarView(context.extensionUri, context.secrets))
+	);
+
 	context.subscriptions.push(
 		vscode.commands.registerCommand("oaicopilot.codebaseStatus", async () => {
 			const cancellation = new vscode.CancellationTokenSource();
@@ -159,6 +175,17 @@ export function activate(context: vscode.ExtensionContext) {
 			} finally {
 				cancellation.dispose();
 			}
+		}),
+		vscode.commands.registerCommand("oaicopilot.codebaseDeleteCollection", async () => {
+			const cancellation = new vscode.CancellationTokenSource();
+			try {
+				await codebaseIndex.deleteCollection(cancellation.token);
+				vscode.window.showInformationMessage("Qdrant collection deleted. It will be recreated on the next index build.");
+			} catch (error) {
+				vscode.window.showErrorMessage(`Failed to delete collection: ${error instanceof Error ? error.message : String(error)}`);
+			} finally {
+				cancellation.dispose();
+			}
 		})
 	);
 
@@ -169,6 +196,86 @@ export function activate(context: vscode.ExtensionContext) {
 		}),
 		vscode.commands.registerCommand("oaicopilot.abortGitCommitMessage", () => {
 			abortCommitGeneration();
+		})
+	);
+
+	// Pin / unpin files to the context (immune to conversation compaction)
+	context.subscriptions.push(
+		vscode.commands.registerCommand("oaicopilot.pinFile", async () => {
+			const editor = vscode.window.activeTextEditor;
+			if (!editor?.document?.uri?.fsPath) {
+				vscode.window.showWarningMessage("No active file to pin. Open a file first.");
+				return;
+			}
+			const filePath = editor.document.uri.fsPath;
+			const config = vscode.workspace.getConfiguration();
+			const pinned: string[] = config.get<string[]>("oaicopilot.pinnedFiles", []);
+			if (pinned.includes(filePath)) {
+				vscode.window.showInformationMessage(`Already pinned: ${filePath}`);
+				return;
+			}
+			await config.update("oaicopilot.pinnedFiles", [...pinned, filePath], vscode.ConfigurationTarget.Global);
+			vscode.window.showInformationMessage(`Pinned to context: ${filePath}`);
+		}),
+		vscode.commands.registerCommand("oaicopilot.unpinFile", async () => {
+			const config = vscode.workspace.getConfiguration();
+			const pinned: string[] = config.get<string[]>("oaicopilot.pinnedFiles", []);
+			if (pinned.length === 0) {
+				vscode.window.showInformationMessage("No pinned files.");
+				return;
+			}
+			const editor = vscode.window.activeTextEditor;
+			const activePath = editor?.document?.uri?.fsPath;
+			const items = pinned.map((p) => ({
+				label: p,
+				description: p === activePath ? "(active file)" : undefined,
+			}));
+			const selected = await vscode.window.showQuickPick(items, {
+				title: "Select a pinned file to unpin",
+			});
+			if (!selected) {
+				return;
+			}
+			await config.update(
+				"oaicopilot.pinnedFiles",
+				pinned.filter((p) => p !== selected.label),
+				vscode.ConfigurationTarget.Global
+			);
+			vscode.window.showInformationMessage(`Unpinned: ${selected.label}`);
+		}),
+		vscode.commands.registerCommand("oaicopilot.listPinnedFiles", async () => {
+			const config = vscode.workspace.getConfiguration();
+			const pinned: string[] = config.get<string[]>("oaicopilot.pinnedFiles", []);
+			if (pinned.length === 0) {
+				vscode.window.showInformationMessage("No pinned files.");
+				return;
+			}
+			const editor = vscode.window.activeTextEditor;
+			const activePath = editor?.document?.uri?.fsPath;
+			const items = await Promise.all(
+				pinned.map(async (p) => {
+					let size: string | undefined;
+					try {
+						const stat = await vscode.workspace.fs.stat(vscode.Uri.file(p));
+						size = formatBytes(stat.size);
+					} catch {
+						size = "(missing)";
+					}
+					return {
+						label: p,
+						description: [size, p === activePath ? "(active file)" : undefined]
+							.filter(Boolean)
+						.join(" "),
+					};
+				})
+			);
+			const selected = await vscode.window.showQuickPick(items, {
+				title: `Pinned files (${pinned.length}) - select to open read-only`,
+			});
+			if (!selected) {
+				return;
+			}
+			await vscode.commands.executeCommand("vscode.open", vscode.Uri.file(selected.label));
 		})
 	);
 
